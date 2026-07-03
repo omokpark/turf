@@ -35,4 +35,5 @@ def analyze(shops: list[dict], my_category: str | None = None) -> dict:
         "my_rank": my_rank,
         "my_count": my_count,
         "my_pct": my_pct,
+        "food_df": food_df,
     }
