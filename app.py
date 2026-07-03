@@ -12,16 +12,18 @@ from streamlit_folium import st_folium
 
 from analyzer.terrain import analyze
 from collector.categories import get_food_categories
-from collector.geocoder import geocode_address
+from collector.geocoder import geocode_address, search_places
 from collector.shop_fetcher import fetch_shops
 from presenter.report import generate_report
 
 GANGNAM_STATION = (127.027619, 37.497925)  # (cx, cy)
 MY_COLOR = "#c0392b"
+CENTER_COLOR = "#3388ff"  # 반경 원 색상
 NEUTRAL_COLOR = "#9aa5a0"
 CATEGORY_PALETTE = ["#c0392b", "#2f6e5b", "#b07d1f", "#5b4b8a", "#1f6f91", "#8a4b6b", "#4b8a4f", "#8a6b4b"]
 CLUSTER_THRESHOLD = 40
-LABEL_ZOOM_THRESHOLD = 17  # 이 줌 레벨부터는 hover 없이도 상호명을 항상 표시
+PREVIEW_GRID_METERS = 50  # 업종 빈도 미리보기 캐시 키를 이 단위로 스냅
+FIT_BOUNDS_RADIUS_M = 600  # 반경 슬라이더 최댓값 기준 고정 — 슬라이더 값과 무관하게 유지해 지도 리마운트 방지
 
 st.set_page_config(page_title="turf", layout="wide")
 
@@ -43,6 +45,27 @@ def _bounds_center(bounds):
     return ((sw["lat"] + ne["lat"]) / 2, (sw["lng"] + ne["lng"]) / 2)
 
 
+def _snap_to_grid(lat: float, lon: float, grid_meters: int = PREVIEW_GRID_METERS) -> tuple[float, float]:
+    """업종 빈도 미리보기 캐시 키용으로 좌표를 격자 단위로 반올림한다."""
+    lat_step = grid_meters / 111_320
+    lon_step = grid_meters / (111_320 * math.cos(math.radians(lat)))
+    return round(lat / lat_step) * lat_step, round(lon / lon_step) * lon_step
+
+
+def _dedupe_by_district(candidates: list[dict]) -> list[dict]:
+    """주소의 '시/도 시/군/구'가 같은 후보는 먼저 나온 것 하나만 남긴다."""
+    seen = set()
+    deduped = []
+    for c in candidates:
+        parts = (c["address"] or c["title"]).split()
+        key = " ".join(parts[:2]) if len(parts) >= 2 else (c["address"] or c["title"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(c)
+    return deduped
+
+
 if "cx" not in st.session_state:
     st.session_state.cx, st.session_state.cy = GANGNAM_STATION
 if "radius" not in st.session_state:
@@ -57,41 +80,112 @@ def move_to(cx: float, cy: float) -> None:
     st.session_state.result = None
 
 
-with st.sidebar:
-    st.markdown(
-        "<div style='font-size:20px; font-weight:700; margin-bottom:8px;'>공공API기반의 상권분석</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown("**① 조회 주소** (동 단위까지 가능, 예: 서울특별시 강남구 역삼동)")
-    address = st.text_input("주소", label_visibility="collapsed")
-    if st.button("주소로 이동") and address:
-        try:
-            coord = geocode_address(address)
-        except RuntimeError as e:
-            st.error(str(e))
-        else:
-            if coord:
-                move_to(*coord)
-                st.rerun()
-            else:
-                st.warning("주소를 찾을 수 없습니다.")
+moved_address = st.session_state.pop("moved_address", None)
+if moved_address:
+    st.toast(f"'{moved_address}' 위치로 이동했습니다.")
 
-    st.divider()
-    st.markdown("**② 위치 · 반경**")
-    st.caption("지도 중앙의 ⊕ 표시가 원하는 위치를 가리키도록 지도를 움직이고, 반경을 조절하세요.")
+# 지도를 그리기 전에, 직전 렌더에서 파악된 지도 중심(없으면 확정 위치)을 기준으로 삼는다.
+# 이렇게 하면 조회 조건 패널(업종 빈도 미리보기·조회 버튼)을 지도보다 먼저 배치할 수 있다.
+basis_center = st.session_state.get("live_center") or (st.session_state.cy, st.session_state.cx)
+
+with st.sidebar:
+    st.title("공공API기반의 상권분석")
+    st.markdown("**반경 (m)**")
     radius = st.slider(
-        "반경 (m)", min_value=300, max_value=1000, value=st.session_state.radius, step=50, label_visibility="collapsed"
+        "반경 (m)", min_value=200, max_value=600, value=st.session_state.radius, step=50, label_visibility="collapsed"
     )
     st.session_state.radius = radius
 
+    st.markdown("**주소 / 장소 검색** (예: 역삼동, 삼성역)")
+    with st.form("address_form", clear_on_submit=False):
+        address = st.text_input("주소", label_visibility="collapsed")
+        submitted = st.form_submit_button("검색")
+    if submitted and address:
+        st.session_state.address_candidates = None
+        try:
+            address_match = geocode_address(address)
+            place_matches = search_places(address)
+        except RuntimeError as e:
+            st.error(str(e))
+        else:
+            # 주소 API는 퍼지 매칭을 하므로(예: '삼성역' -> 경산시 '삼성역길') 결과가 있어도
+            # 바로 이동하지 않고, 장소명 검색 결과와 합쳐서 항상 사용자 확인을 거친다.
+            # 같은 시/군/구 안의 중복 후보는 하나로 줄인다.
+            candidates = _dedupe_by_district(([address_match] if address_match else []) + place_matches)
+            if len(candidates) == 1:
+                # 후보가 하나뿐이면 모호하지 않으므로 바로 이동한다.
+                chosen = candidates[0]
+                move_to(chosen["cx"], chosen["cy"])
+                st.session_state.moved_address = chosen["title"]
+                st.rerun()
+            elif candidates:
+                st.session_state.address_candidates = candidates
+            else:
+                st.warning("주소 또는 장소를 찾을 수 없습니다.")
+
+    if st.session_state.get("address_candidates"):
+        candidates = st.session_state.address_candidates
+        labels = [
+            f"{c['title']} — {c['address']}" if c["address"] and c["address"] != c["title"] else c["title"]
+            for c in candidates
+        ]
+        picked_idx = st.selectbox(
+            "검색 결과 중 선택하세요", range(len(candidates)), format_func=lambda i: labels[i], key="picked_candidate"
+        )
+        if st.button("선택"):
+            chosen = candidates[picked_idx]
+            move_to(chosen["cx"], chosen["cy"])
+            st.session_state.moved_address = chosen["title"]
+            st.session_state.address_candidates = None
+            st.rerun()
+
+    if st.button("초기 위치(강남역)로"):
+        move_to(*GANGNAM_STATION)
+        st.session_state.radius = 500
+        st.rerun()
+
     st.divider()
-    condition_slot = st.empty()
+    try:
+        with st.spinner("업종 빈도 계산 중..."):
+            snapped_lat, snapped_lon = _snap_to_grid(basis_center[0], basis_center[1])
+            preview_shops = _fetch_shops_cached(snapped_lon, snapped_lat, radius)
+            freq = analyze(preview_shops, None)["by_category"].set_index("상권업종소분류명")["개수"]
+            ordered_categories = sorted(_food_categories(), key=lambda c: (-freq.get(c, 0), c))
+    except Exception as e:
+        ordered_categories = _food_categories()
+        st.warning(f"이 지역 업종 빈도를 불러오지 못해 기본 순서로 표시합니다. ({e})")
+
+    st.markdown("**내 업종** (다중 선택 가능, 이 지역 빈도순)")
+    if st.button("이 지역 상위 5개 자동선택") and ordered_categories:
+        st.session_state.my_categories = ordered_categories[:5]
+    my_categories = st.multiselect("업종", ordered_categories, key="my_categories", label_visibility="collapsed")
+
+    if st.button("조회하기", type="primary"):
+        st.session_state.cx, st.session_state.cy = basis_center[1], basis_center[0]
+        with st.spinner("분석 중..."):
+            # basis_center는 캐시 히트율을 위해 스냅된 근사 좌표로 미리보기를 조회했을 수 있으므로,
+            # 확정 시점에는 정확한 좌표로 다시 조회한다.
+            shops = _fetch_shops_cached(st.session_state.cx, st.session_state.cy, radius)
+            result = analyze(shops, None)
+            my_stats = []
+            for cat in my_categories:
+                r = analyze(shops, cat)
+                my_stats.append({"category": cat, "rank": r["my_rank"], "count": r["my_count"], "pct": r["my_pct"]})
+            st.session_state.result = (result, radius, my_categories, my_stats)
+            st.session_state.result_query_snapshot = (
+                round(basis_center[0], 5),
+                round(basis_center[1], 5),
+                radius,
+                tuple(sorted(my_categories)),
+            )
+        st.rerun()
 
 vworld_key = os.getenv("VWORLD_API_KEY")
 m = folium.Map(
     location=[st.session_state.cy, st.session_state.cx],
     zoom_start=16,
     tiles=None if vworld_key else "OpenStreetMap",
+    scrollWheelZoom=False,
 )
 
 if vworld_key:
@@ -103,12 +197,10 @@ if vworld_key:
         control=False,
     ).add_to(m)
 
-location = [st.session_state.cy, st.session_state.cx]
-folium.Circle(location, radius=radius, color="blue", fill=True, fill_opacity=0.1).add_to(m)
-
-# 반경 원이 항상 화면 안에 들어오도록 자동으로 맞춘다
-lat_pad = radius / 111_320
-lon_pad = radius / (111_320 * math.cos(math.radians(st.session_state.cy)))
+# 반경 원이 항상 화면 안에 들어오도록 자동으로 맞춘다. 슬라이더 값이 아니라 고정값을 쓴다 —
+# radius를 쓰면 반경 조절마다 base map 콘텐츠(해시 대상)가 바뀌어 지도가 리마운트되고 줌이 리셋된다.
+lat_pad = FIT_BOUNDS_RADIUS_M / 111_320
+lon_pad = FIT_BOUNDS_RADIUS_M / (111_320 * math.cos(math.radians(st.session_state.cy)))
 m.fit_bounds(
     [
         [st.session_state.cy - lat_pad, st.session_state.cx - lon_pad],
@@ -135,34 +227,9 @@ if st.session_state.result:
                 color=category_colors.get(row["상권업종소분류명"], MY_COLOR),
                 fill=True,
                 fill_opacity=0.85,
-                tooltip=folium.Tooltip(row["상호"], permanent=True, direction="top", sticky=False),
+                tooltip=folium.Tooltip(row["상호"], permanent=False, direction="top", sticky=False),
                 popup=folium.Popup(f"<b>{shop_name}</b><br>{shop_category}", max_width=220),
             ).add_to(layer)
-
-        # 상호명은 항상 지도에 붙어 있지만(permanent tooltip), 일정 배율 이상으로 확대했을 때만
-        # 실제로 보이도록 CSS로 토글한다 — 배율이 낮을 때 라벨이 다닥다닥 겹치는 것을 막기 위함이다.
-        m.get_root().html.add_child(
-            folium.Element(
-                f"""
-                <img src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
-                     style="display:none" onload="
-                    (function() {{
-                        function turfUpdateLabelVisibility() {{
-                            var pane = document.querySelector('#map_div .leaflet-tooltip-pane');
-                            if (typeof map_div === 'undefined' || !pane) return;
-                            pane.style.display = map_div.getZoom() >= {LABEL_ZOOM_THRESHOLD} ? '' : 'none';
-                        }}
-                        function turfWaitForMapLabels() {{
-                            if (typeof map_div === 'undefined') {{ setTimeout(turfWaitForMapLabels, 50); return; }}
-                            map_div.on('zoomend', turfUpdateLabelVisibility);
-                            turfUpdateLabelVisibility();
-                        }}
-                        turfWaitForMapLabels();
-                    }})();
-                    ">
-                """
-            )
-        )
 
     if len(used_categories) > 1:
         legend_rows = "".join(
@@ -183,100 +250,69 @@ if st.session_state.result:
             )
         )
 
-# 지도 정중앙에 고정된 원 + 십자선 — 지도를 스크롤해도 이 둘은 화면 중앙에 붙어서 함께 움직이고,
-# 지도만 그 밑에서 흘러간다. 이 위치가 "찾기"를 누르는 순간 실제 좌표로 확정된다.
-# 이미 결과가 나온 뒤(영역이 확정된 뒤)에는 확정된 원(음영)만 보여주고 이 미리보기는 생략한다 —
-# 줌 배율이 크게 바뀌면 화면 고정 미리보기 원과 실제 지도 좌표에 고정된 원의 크기가 어긋나 보여서
-# 둘을 같이 보여주면 오히려 혼란스럽다.
-# streamlit-folium은 지도의 실제 Leaflet 변수명을 "map_div"로 고정해서 렌더링한다
-# (folium.Map.get_name()이 반환하는 이름과는 다르다).
-map_var = "map_div"
-if not st.session_state.result:
-    m.get_root().html.add_child(
-        folium.Element(
-            f"""
-        <div id="turf-radius-preview" style="position:fixed; border-radius:50%; border:2px solid {MY_COLOR};
-                    background:rgba(192,57,43,0.12); z-index:999; pointer-events:none;"></div>
-        <div id="turf-crosshair" style="position:fixed; z-index:1000; pointer-events:none; font-size:26px;
-                    line-height:1; color:{MY_COLOR}; text-shadow:0 0 3px #fff, 0 0 3px #fff, 0 0 4px #fff;
-                    transform:translate(-50%,-50%);">
-          ⊕
-        </div>
-        <img src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
-             style="display:none" onload="
-            (function() {{
-                function turfPositionOverlay() {{
-                    var mapEl = document.getElementById('{map_var}');
-                    var circleEl = document.getElementById('turf-radius-preview');
-                    var crossEl = document.getElementById('turf-crosshair');
-                    if (typeof {map_var} === 'undefined' || !mapEl || !circleEl) return;
+# 반경 원은 feature_group_to_add로 그린다 — 이 값은 streamlit-folium 컴포넌트의 리마운트 여부를
+# 결정하는 콘텐츠 해시에 포함되지 않아서(__init__.py의 hash_key 계산 참고), 위치나 반경이 바뀌어도
+# 지도가 리마운트되지 않고 원만 매끄럽게 갱신된다. live_center(직전 렌더 값)를 기준으로 그려서
+# 드래그를 따라가고, radius(슬라이더 값)로 크기가 바뀐다.
+circle_center = list(st.session_state.get("live_center") or (st.session_state.cy, st.session_state.cx))
+radius_group = folium.FeatureGroup(name="radius_circle")
+folium.Circle(circle_center, radius=radius, color=CENTER_COLOR, fill=True, fill_opacity=0.1).add_to(radius_group)
 
-                    var rect = mapEl.getBoundingClientRect();
-                    var centerX = rect.left + rect.width / 2;
-                    var centerY = rect.top + rect.height / 2;
-
-                    var metersPerPixel = 156543.03392 * Math.cos({map_var}.getCenter().lat * Math.PI / 180) / Math.pow(2, {map_var}.getZoom());
-                    var radiusPx = {radius} / metersPerPixel;
-
-                    circleEl.style.left = centerX + 'px';
-                    circleEl.style.top = centerY + 'px';
-                    circleEl.style.width = (radiusPx * 2) + 'px';
-                    circleEl.style.height = (radiusPx * 2) + 'px';
-                    circleEl.style.transform = 'translate(-50%, -50%)';
-
-                    if (crossEl) {{
-                        crossEl.style.left = centerX + 'px';
-                        crossEl.style.top = centerY + 'px';
-                    }}
-                }}
-                function turfWaitForMap() {{
-                    if (typeof {map_var} === 'undefined') {{ setTimeout(turfWaitForMap, 50); return; }}
-                    {map_var}.on('zoom', turfPositionOverlay);
-                    window.addEventListener('resize', turfPositionOverlay);
-                    turfPositionOverlay();
-                }}
-                turfWaitForMap();
-            }})();
-            ">
-            """
-        )
+# feature_group_to_add는 매 렌더마다 레이어를 "추가"만 하고 이전 것을 지우지 않으므로(라이브러리가
+# window.feature_group 배열에 계속 push), 그대로 두면 원이 계속 쌓인다. 이 정리 로직은 반경/위치와
+# 무관한 고정 텍스트라 base map 콘텐츠 해시에 영향을 주지 않는다(한 번만 등록되면 됨).
+m.get_root().html.add_child(
+    folium.Element(
+        """
+    <img src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw=="
+         style="display:none" onload="
+        (function() {
+            function turfPruneFeatureGroups() {
+                if (typeof map_div === 'undefined') { setTimeout(turfPruneFeatureGroups, 50); return; }
+                map_div.on('layeradd', function() {
+                    if (window.feature_group && window.feature_group.length > 1) {
+                        var keep = window.feature_group[window.feature_group.length - 1];
+                        window.feature_group.forEach(function(layer) {
+                            if (layer !== keep) { map_div.removeLayer(layer); }
+                        });
+                        window.feature_group = [keep];
+                    }
+                });
+            }
+            turfPruneFeatureGroups();
+        })();
+        ">
+        """
     )
+)
 
-map_data = st_folium(m, width=800, height=560, center=[st.session_state.cy, st.session_state.cx], key="main_map")
+map_data = st_folium(
+    m,
+    height=560,
+    use_container_width=True,
+    center=[st.session_state.cy, st.session_state.cx],
+    feature_group_to_add=radius_group,
+    key="main_map",
+)
 
 live_center = _bounds_center(map_data.get("bounds")) or (st.session_state.cy, st.session_state.cx)
+st.session_state.live_center = live_center
 
-with condition_slot.container():
-    try:
-        with st.spinner("업종 빈도 계산 중..."):
-            preview_shops = _fetch_shops_cached(live_center[1], live_center[0], radius)
-            freq = analyze(preview_shops, None)["by_category"].set_index("상권업종소분류명")["개수"]
-            ordered_categories = sorted(_food_categories(), key=lambda c: (-freq.get(c, 0), c))
-    except Exception as e:
-        preview_shops = None
-        ordered_categories = _food_categories()
-        st.warning(f"이 지역 업종 빈도를 불러오지 못해 기본 순서로 표시합니다. ({e})")
-
-    st.markdown("**③ 내 업종** (다중 선택 가능, 이 지역 빈도순)")
-    my_categories = st.multiselect("업종", ordered_categories, key="my_categories", label_visibility="collapsed")
-
-    if st.button("④ 찾기"):
-        st.session_state.cx, st.session_state.cy = live_center[1], live_center[0]
-        with st.spinner("분석 중..."):
-            shops = preview_shops if preview_shops is not None else _fetch_shops_cached(
-                st.session_state.cx, st.session_state.cy, radius
-            )
-            result = analyze(shops, None)
-            my_stats = []
-            for cat in my_categories:
-                r = analyze(shops, cat)
-                my_stats.append({"category": cat, "rank": r["my_rank"], "count": r["my_count"], "pct": r["my_pct"]})
-            st.session_state.result = (result, radius, my_categories, my_stats)
-        st.rerun()
+st.divider()
+st.subheader("📊 분석 결과")
 
 if st.session_state.result:
+    current_snapshot = (
+        round(basis_center[0], 5),
+        round(basis_center[1], 5),
+        radius,
+        tuple(sorted(my_categories)),
+    )
+    if st.session_state.get("result_query_snapshot") != current_snapshot:
+        st.warning("위치·반경·업종이 마지막 조회 이후 바뀌었습니다 — 다시 조회해보세요.")
+
     result, used_radius, used_categories, used_stats = st.session_state.result
-    st.subheader("분석 결과")
+    st.caption(f"조회 위치: 위도 {st.session_state.cy:.5f}, 경도 {st.session_state.cx:.5f} · 반경 {used_radius}m")
 
     st.metric("총 음식점", f"{result['total']}곳")
     for stat in used_stats:
@@ -294,6 +330,8 @@ if st.session_state.result:
     chart_df["표시명"] = chart_df["순위"].astype(str) + "위 " + chart_df["상권업종소분류명"]
     chart_df["라벨"] = chart_df["개수"].astype(str) + "곳 (" + chart_df["비율"].astype(str) + "%)"
     chart_df["내업종"] = chart_df["상권업종소분류명"].isin(used_categories)
+    # 지도 범례와 같은 색상 매핑을 사용 — 선택하지 않은 업종은 중립색
+    chart_df["색상"] = chart_df["상권업종소분류명"].map(category_colors).fillna(NEUTRAL_COLOR)
 
     base = alt.Chart(chart_df).encode(
         y=alt.Y(
@@ -305,7 +343,7 @@ if st.session_state.result:
     )
     bars = base.mark_bar().encode(
         x=alt.X("개수:Q", title="개수"),
-        color=alt.condition("datum.내업종", alt.value(MY_COLOR), alt.value(NEUTRAL_COLOR)),
+        color=alt.Color("색상:N", scale=None, legend=None),
         tooltip=[
             alt.Tooltip("상권업종소분류명:N", title="업종"),
             alt.Tooltip("순위:Q", title="순위"),
@@ -317,17 +355,25 @@ if st.session_state.result:
     chart_height = max(320, 24 * len(chart_df))
     chart = (bars + labels).properties(height=chart_height)
 
+    if chart_height > 480:
+        st.caption("전체 업종을 보려면 아래 차트를 스크롤하세요.")
     with st.container(height=480):
         st.altair_chart(chart, use_container_width=True)
 
     my_shops_table = result["food_df"][result["food_df"]["상권업종소분류명"].isin(used_categories)]
     if not my_shops_table.empty:
         st.markdown("**업소 목록**")
-        st.dataframe(
-            my_shops_table[["상호", "상권업종소분류명"]]
-            .rename(columns={"상호": "상호명", "상권업종소분류명": "업종"})
-            .reset_index(drop=True),
-            use_container_width=True,
+        display_table = (
+            my_shops_table[["상호", "상권업종소분류명", "도로명주소"]]
+            .rename(columns={"상호": "상호명", "상권업종소분류명": "업종", "도로명주소": "주소"})
+            .reset_index(drop=True)
+        )
+        st.dataframe(display_table, use_container_width=True)
+        st.download_button(
+            "업소 목록 CSV 다운로드",
+            display_table.to_csv(index=False).encode("utf-8-sig"),
+            file_name="turf_업소목록.csv",
+            mime="text/csv",
         )
 
     report_text = generate_report(result, used_radius, None)
@@ -339,3 +385,5 @@ if st.session_state.result:
             )
     with st.expander("원본 리포트 텍스트"):
         st.text(report_text)
+else:
+    st.caption("아직 조회 결과가 없습니다. 위 조건을 설정하고 '조회하기'를 눌러주세요.")

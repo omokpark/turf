@@ -1,7 +1,7 @@
 """
 소상공인시장진흥공단 상가(상권)정보 API - 반경내 상권조회
 입력: cx(경도), cy(위도), radius(반경, m)
-출력: 상가업소 리스트 [{상호, 상권업종대분류명, 상권업종중분류명, 상권업종소분류명, 위도, 경도}, ...]
+출력: 상가업소 리스트 [{상호, 상권업종대분류명, 상권업종중분류명, 상권업종소분류명, 도로명주소, 위도, 경도}, ...]
 """
 
 import os
@@ -51,6 +51,7 @@ def fetch_shops(cx: float, cy: float, radius: int) -> list[dict]:
                     "상권업종대분류명": item.get("indsLclsNm"),
                     "상권업종중분류명": item.get("indsMclsNm"),
                     "상권업종소분류명": item.get("indsSclsNm"),
+                    "도로명주소": item.get("rdnmAdr"),
                     "위도": float(item.get("lat")),
                     "경도": float(item.get("lon")),
                 }
