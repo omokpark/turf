@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+.DS_Store
+venv/
+
+# 로컬 모니터링 에이전트가 실수로 남긴 로그 (프로젝트와 무관)
+%programdata%/
