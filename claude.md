@@ -85,6 +85,17 @@ streamlit>=1.30      # Day 3
 matplotlib>=3.8      # Day 4
 
 
+5-1. 다른 PC에서 이어서 작업하기
+
+.env는 .gitignore에 포함되어 GitHub에 올라가지 않는다. 새 PC에서는 저장소를 clone해도 .env가 없으므로 직접 만들어야 한다.
+
+git clone https://github.com/omokpark/turf.git
+pip install -r requirements.txt
+.env.example을 .env로 복사하고 SGIS_API_KEY 값 채우기
+
+data.go.kr 서비스키는 PC·IP에 묶이지 않고 계정 단위로 발급된다. 기존에 쓰던 키를 그대로 재사용하면 되고, 새로 발급받을 필요는 없다.
+
+
 6. 보안 체크리스트
 
 
