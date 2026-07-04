@@ -4,5 +4,11 @@ __pycache__/
 .DS_Store
 venv/
 
+# 인허가 등 대용량 원본 데이터 (LOCALDATA CSV는 수백 MB~GB)
+data/
+
+# 로컬 작업 문서
+files/
+
 # 로컬 모니터링 에이전트가 실수로 남긴 로그 (프로젝트와 무관)
 %programdata%/

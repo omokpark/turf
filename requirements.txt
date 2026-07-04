@@ -5,3 +5,4 @@ streamlit>=1.30      # Day 3
 folium>=0.15         # Day 3
 streamlit-folium>=0.18 # Day 3
 matplotlib>=3.8      # Day 4
+pyproj>=3.6          # Day 9: 인허가 좌표(EPSG:5174) → WGS84 변환
