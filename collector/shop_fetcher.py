@@ -45,6 +45,8 @@ def fetch_shops(cx: float, cy: float, radius: int) -> list[dict]:
         body = data.get("body", {})
         items = body.get("items", [])
         for item in items:
+            if item.get("lat") is None or item.get("lon") is None:
+                continue
             shops.append(
                 {
                     "상호": item.get("bizesNm"),

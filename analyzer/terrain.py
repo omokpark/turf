@@ -2,10 +2,13 @@
 
 import pandas as pd
 
+COLUMNS = ["상호", "상권업종대분류명", "상권업종중분류명", "상권업종소분류명", "도로명주소", "위도", "경도"]
+
 
 def analyze(shops: list[dict], my_category: str | None = None) -> dict:
     """상가업소 리스트에서 음식점만 골라 업종 소분류 기준으로 집계한다."""
-    df = pd.DataFrame(shops)
+    # columns를 명시해 shops가 빈 리스트여도(반경 내 업소 0곳) KeyError 없이 빈 집계를 반환한다.
+    df = pd.DataFrame(shops, columns=COLUMNS)
     food_df = df[df["상권업종대분류명"] == "음식"]
     total = len(food_df)
 
