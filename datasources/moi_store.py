@@ -40,6 +40,15 @@ def freshness() -> datetime | None:
     return datetime.fromtimestamp(min(f.stat().st_mtime for f in files))
 
 
+def cache_token() -> tuple:
+    """캐시 무효화용 토큰 — 파티션이 추가·갱신되면 반드시 값이 바뀐다.
+
+    freshness()는 '가장 오래된' 시각이라 새 파티션이 추가돼도 안 변한다(실제로
+    단란주점만 보이던 버그의 원인). 파일 목록+수정시각 전체를 키로 쓴다.
+    """
+    return tuple(sorted((str(f), f.stat().st_mtime) for f in partition_files()))
+
+
 def cached_summary() -> pd.DataFrame:
     """UI 안내용: 업종·자치단체별 보유 현황. [업종, 자치단체코드, 행수]"""
     rows = []
