@@ -162,10 +162,13 @@ turf/
 - [ ] 사용자 육안 검증: 아는 지역 2곳(뜨는 곳/죽는 곳)에서 국면 매트릭스 방향이 상식과 일치하는지.
 - 공실 회복 속도(vacancy_recovery)는 24개월 재입점 기한+완결 관측으로 측정을 고쳤으나, 연도별 재입점 표본이 적어(강남역 기준 연 10~30건) 중앙값 편차가 과대 → **아웃룩에서 제외 (사용자 결정, 2026-07-06)**. 코드·테스트는 유지, 등록 import만 해제 — Phase 5 주소키 건물 단위 정규화 후 재평가.
 
-### Phase 2b — 무료 업소 모델 3종 + 우선순위 화면
-- [ ] signals: `survivor.py`(M2), `franchise.py`(M4), `liquor_adjacency.py`(M5) — trend.py 로직 이식.
-- [ ] `scorers/weighted_sum.py` + **"변화"·"방문 우선순위" 탭 추가**. 변화 탭: yearly_trend 차트, 최근 개업(골든타임)·자리회전 리스트. 우선순위 탭: 랭킹 표 + 근거 배지(M0 국면을 맥락 배지로 병기) + 지도 마커.
-- 검증: 배지 수치가 trend.py 직접 호출과 일치, 실지역 1곳 상위 30건 육안 스팟체크.
+### Phase 2b — 무료 업소 모델 3종 + 우선순위 화면 — ✅ 구현 완료 (2026-07-06), 육안 스팟체크 잔여
+- [x] signals: `survivor.py`(M2), `franchise.py`(M4), `liquor_adjacency.py`(M5) + 계획 외 추가 `recent_opening.py`(신규 개업 골든타임 — 180일 선형 감쇠).
+- [x] `scorers/weighted_sum.py` + **"🔄 변화"·"🎯 방문 우선순위" 탭 추가** (`ui/changes_tab.py`·`ui/ranking_tab.py`, app.py 패치는 import 2줄+탭 배선). 변화 탭: yearly_trend 차트, 최근 개업(골든타임)·자리회전 리스트. 우선순위 탭: 랭킹 표 + 근거 배지(M0 국면을 캡션 맥락으로 병기) + 지도 마커.
+- [x] 검증: pytest 56개 그린(신호 계약·수치·스코어러 배지 계약 포함, `tests/test_business_signals.py`), 강남역 400m 실데이터 종단 확인 — 상위 1~12위 전부 2026년 개업(11~160일차), 13위부터 생존 검증 업소.
+- [ ] 실지역 1곳 상위 30건 육안 스팟체크 (사용자).
+- **랭킹 정책 확정 (사용자 피드백 2026-07-06, 2회 반영)**: ① 초기 버전이 장수 업소 순위가 되는 문제 → `recent_opening` 신호 추가(가중 1.5, "개업 직후 = 공급사 결정 시점"이라는 M8 전제의 무료 선반영). ② 그래도 노포가 높고 프랜차이즈 제외가 과하다는 피드백 → 생존자 지수를 자리 평균 도달에서 **포화**(MAX_RATIO 2.0→1.0, 나이 단조성 제거)·가중 0.5로 인하, **franchise는 가중 0(점수 미반영, 체인 추정 정보 배지만)**. "독립 업소로 추정" 배지는 노이즈라 제거(체인일 때만 배지).
+- 부산물: weighted_sum이 배지 None→NaN(truthy)을 배지로 수집하던 잠재 버그 수정(pd.notna 가드). 신규 인허가 건 대응 위해 python.org 파이썬의 Install Certificates 미실행 시 urllib SSL 실패함을 확인(트러블슈팅 기록 — moi_api는 urllib 사용).
 
 ### Phase 3 — 구조 정리 (랭킹 화면 검증 후)
 - [ ] app.py → `ui/` 분해: state/sidebar/map_view/components/pages, 인라인 JS는 `map_interactions.js`로 격리(string.Template 주입), JS↔파이썬 채널 양끝을 `channels.py`에 집약. streamlit-folium 버전 상한 고정.

@@ -23,7 +23,9 @@ from analyzer.terrain import analyze
 from collector.geocoder import geocode_address, search_places
 from collector.shop_fetcher import fetch_shops
 from presenter.report import generate_report
+from ui.changes_tab import render_changes
 from ui.outlook_tab import render_outlook
+from ui.ranking_tab import render_ranking
 
 GANGNAM_STATION = (127.027619, 37.497925)  # (cx, cy)
 CENTER_COLOR = "#3388ff"  # 반경 원 색상
@@ -214,11 +216,21 @@ with st.sidebar:
 
 category_colors = {cat: CATEGORY_PALETTE[i % len(CATEGORY_PALETTE)] for i, cat in enumerate(selected_categories)}
 
-tab_map, tab_stats, tab_outlook = st.tabs(["🗺️ 지도", "📊 업종 구성", "📈 구역 아웃룩"])
+tab_map, tab_stats, tab_outlook, tab_changes, tab_ranking = st.tabs(
+    ["🗺️ 지도", "📊 업종 구성", "📈 구역 아웃룩", "🔄 변화", "🎯 방문 우선순위"]
+)
 
 # ── 탭 3: 구역 아웃룩 (M0) — 이 구역이 어떤 국면인지 (인허가 이력 기반) ────────
 with tab_outlook:
     render_outlook(st.session_state.cx, st.session_state.cy)
+
+# ── 탭 4: 변화 — 도보 반경 기준 연도별 개폐업·최근 개업·자리회전 (인허가 이력 기반) ──
+with tab_changes:
+    render_changes(st.session_state.cx, st.session_state.cy, radius)
+
+# ── 탭 5: 방문 우선순위 — 무료 업소 모델(M2/M4/M5) 가중합 랭킹 + 근거 배지 ──────
+with tab_ranking:
+    render_ranking(st.session_state.cx, st.session_state.cy, radius)
 
 # ── 탭 1: 지도 — 밀집도·분포의 직관적 파악 + 중심·반경 조작 ─────────────────
 with tab_map:
