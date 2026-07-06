@@ -1,11 +1,14 @@
 """공실 회복 속도 — 폐업한 자리에 새 인허가가 들어오기까지 걸린 일수
 
 빈 자리가 빨리 채워지는 골목 = 들어오려는 대기 수요가 있다는 가장 직접적인 증거.
-개업·폐업 수만 봐서는 안 보이는 신호다.
 
-주의(오른쪽 절단): 아직 재입점이 안 된 폐업(공실 지속 중)은 표본에서 빠지므로
-최근 기간의 중앙값은 실제보다 빨라 보이는 쪽으로 치우친다 — fact에 표본 수를 병기해
-투명하게 드러낸다.
+측정 설계 (연도 간 공정 비교를 위한 두 가지 장치):
+1. 재입점 인정 기한 24개월 — 폐업 후 24개월을 넘겨 들어온 인허가는 공실 대기가
+   아니라 재건축·용도 변경 등 무관한 사건일 가능성이 높아 재입점으로 치지 않는다.
+   (기한 없이 재면 1995년 폐업→2015년 인허가 같은 20년 '공백'이 과거 중앙값을 부풀린다)
+2. 완결 관측만 비교 — 폐업 후 24개월이 아직 안 지난 최근 폐업은 재입점 여부가
+   미확정이므로 통계에서 제외한다. (안 빼면 최근 기간은 빨리 채워진 것만 관측돼
+   실제보다 빨라 보인다)
 """
 
 import pandas as pd
@@ -15,13 +18,20 @@ from signals.base import AreaContext, IndicatorResult
 from signals.outlook import address_key, grid_percentile
 from signals.registry import register_indicator
 
+REFILL_WINDOW_DAYS = 730  # 재입점 인정 기한 (24개월)
 
-def _refill_gaps(df: pd.DataFrame) -> pd.DataFrame:
-    """폐업 → 같은 주소의 다음 인허가까지의 간격. 반환: [폐업일자, 재입점일자, 공백일수]"""
+
+def _refill_observations(df: pd.DataFrame, today: pd.Timestamp) -> pd.DataFrame:
+    """완결 관측된 폐업들의 재입점 여부·소요일.
+
+    반환: [폐업일자, 공백일수(재입점 없으면 NaN), 재입점(bool)]
+    완결 = 폐업일 + 24개월 ≤ today (재입점 여부가 확정된 폐업만).
+    """
     d = df.assign(_주소키=address_key(df))
     d = d[d["_주소키"].str.len() > 0]
+    complete_cutoff = today - pd.Timedelta(days=REFILL_WINDOW_DAYS)
     closures = (
-        d.loc[d[schema.CLOSED_AT].notna(), ["_주소키", schema.CLOSED_AT]]
+        d.loc[d[schema.CLOSED_AT].notna() & (d[schema.CLOSED_AT] <= complete_cutoff), ["_주소키", schema.CLOSED_AT]]
         .sort_values(schema.CLOSED_AT)
         .reset_index(drop=True)
     )
@@ -31,7 +41,7 @@ def _refill_gaps(df: pd.DataFrame) -> pd.DataFrame:
         .reset_index(drop=True)
     )
     if len(closures) == 0 or len(licenses) == 0:
-        return pd.DataFrame(columns=["폐업일자", "재입점일자", "공백일수"])
+        return pd.DataFrame(columns=["폐업일자", "공백일수", "재입점"])
     merged = pd.merge_asof(
         closures,
         licenses.rename(columns={schema.LICENSED_AT: "재입점일자"}),
@@ -41,23 +51,30 @@ def _refill_gaps(df: pd.DataFrame) -> pd.DataFrame:
         direction="forward",
         allow_exact_matches=False,
     )
-    merged = merged.dropna(subset=["재입점일자"])
-    out = pd.DataFrame(
+    gap = (merged["재입점일자"] - merged[schema.CLOSED_AT]).dt.days
+    refilled = gap.notna() & (gap >= 0) & (gap <= REFILL_WINDOW_DAYS)
+    return pd.DataFrame(
         {
             "폐업일자": merged[schema.CLOSED_AT],
-            "재입점일자": merged["재입점일자"],
-            "공백일수": (merged["재입점일자"] - merged[schema.CLOSED_AT]).dt.days,
+            "공백일수": gap.where(refilled),
+            "재입점": refilled,
         }
     )
-    return out[out["공백일수"] >= 0].reset_index(drop=True)
 
 
-def _median_gap(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> tuple[float | None, int]:
-    gaps = _refill_gaps(df)
-    window = gaps[gaps["폐업일자"].between(start, end)]
+def _window_stats(obs: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> tuple[float | None, float | None, int]:
+    """(중앙값 공백일수, 재입점률, 완결 폐업 수) — 폐업일 기준 기간 필터."""
+    window = obs[obs["폐업일자"].between(start, end)]
     if len(window) == 0:
-        return None, 0
-    return float(window["공백일수"].median()), len(window)
+        return None, None, 0
+    refilled = window[window["재입점"]]
+    median = float(refilled["공백일수"].median()) if len(refilled) > 0 else None
+    return median, float(window["재입점"].mean()), len(window)
+
+
+def _cell_median(cell: pd.DataFrame, today: pd.Timestamp, start: pd.Timestamp, end: pd.Timestamp) -> float | None:
+    median, _, _ = _window_stats(_refill_observations(cell, today), start, end)
+    return -median if median is not None else None  # 빠를수록 좋음 — 부호 반전
 
 
 @register_indicator
@@ -73,40 +90,47 @@ class VacancyRecovery:
     def compute(self, ctx: AreaContext) -> IndicatorResult:
         df = ctx.establishments
         now = ctx.now
-        current, n_recent = _median_gap(df, now - pd.DateOffset(years=3), now)
-        previous, n_prev = _median_gap(df, now - pd.DateOffset(years=6), now - pd.DateOffset(years=3))
+        obs = _refill_observations(df, now)
+        # 완결 관측만 있으므로 기간 상한은 (now - 24개월). 거기서 3년씩 두 구간.
+        complete_end = now - pd.Timedelta(days=REFILL_WINDOW_DAYS)
+        cur_start = complete_end - pd.DateOffset(years=3)
+        prev_start = complete_end - pd.DateOffset(years=6)
+        current, cur_rate, n_cur = _window_stats(obs, cur_start, complete_end)
+        previous, prev_rate, n_prev = _window_stats(obs, prev_start, cur_start)
 
-        gaps = _refill_gaps(df)
-        if len(gaps) > 0:
+        if len(obs) > 0:
             series = (
-                gaps.assign(연도=gaps["폐업일자"].dt.year)
-                .groupby("연도")["공백일수"]
-                .median()
-                .reset_index(name="중앙값공백일수")
+                obs.assign(연도=obs["폐업일자"].dt.year)
+                .groupby("연도")
+                .agg(중앙값공백일수=("공백일수", "median"), 재입점률=("재입점", "mean"), 완결폐업수=("재입점", "size"))
+                .reset_index()
             )
+            series["재입점률"] = (series["재입점률"] * 100).round(1)
         else:
-            series = pd.DataFrame(columns=["연도", "중앙값공백일수"])
+            series = pd.DataFrame(columns=["연도", "중앙값공백일수", "재입점률", "완결폐업수"])
 
         percentile = None
         if ctx.reference is not None and current is not None:
-            # 빠를수록(일수가 작을수록) 좋은 신호 — 부호를 뒤집어 '상위 N%'가 빠름을 뜻하게 한다
             percentile = grid_percentile(
                 ctx.reference,
-                lambda cell: (lambda v: -v[0] if v[0] is not None else None)(
-                    _median_gap(cell, now - pd.DateOffset(years=3), now)
-                ),
+                lambda cell: _cell_median(cell, now, cur_start, complete_end),
                 -current,
             )
-        prev_txt = f"{previous:.0f}일" if previous is not None else "표본 없음"
+        if current is not None:
+            prev_txt = f"{previous:.0f}일" if previous is not None else "표본 없음"
+            period = f"{cur_start.year}~{complete_end.year}년 폐업"
+            fact = (
+                f"폐업 후 24개월 내 재입점된 자리의 중앙값 공백 {current:.0f}일, 재입점률 {cur_rate * 100:.0f}% "
+                f"({period} {n_cur}건 기준 · 직전 3년 {prev_txt}·재입점률 {prev_rate * 100:.0f}%)"
+                if prev_rate is not None
+                else f"폐업 후 24개월 내 재입점 중앙값 {current:.0f}일, 재입점률 {cur_rate * 100:.0f}% ({period} {n_cur}건)"
+            )
+        else:
+            fact = f"완결 관측(폐업 후 24개월 경과)된 재입점 사례가 없습니다 (완결 폐업 {n_cur}건)"
         return IndicatorResult(
             current=current if current is not None else float("nan"),
             previous=previous,
             series=series,
             percentile=percentile,
-            fact=(
-                f"빈 자리가 다시 채워지기까지 중앙값 {current:.0f}일 (최근 3년 재입점 {n_recent}건, "
-                f"그 전 3년 {prev_txt}·{n_prev}건) — 재입점 완료 건 기준"
-                if current is not None
-                else f"최근 3년 내 재입점 완료 사례가 없습니다 (표본 0건)"
-            ),
+            fact=fact,
         )

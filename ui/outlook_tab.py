@@ -180,9 +180,14 @@ def _series_chart(indicator_id: str, series: pd.DataFrame) -> alt.Chart:
             alt.Chart(series)
             .mark_bar(color=COLOR_OPEN, cornerRadiusTopLeft=4, cornerRadiusTopRight=4, size=18)
             .encode(
-                x=alt.X("연도:O"),
-                y=alt.Y("중앙값공백일수:Q", title="중앙값 공백일수"),
-                tooltip=["연도:O", alt.Tooltip("중앙값공백일수:Q", title="중앙값(일)")],
+                x=alt.X("연도:O", title="폐업 연도"),
+                y=alt.Y("중앙값공백일수:Q", title="중앙값 공백일수 (24개월 내 재입점 건)"),
+                tooltip=[
+                    "연도:O",
+                    alt.Tooltip("중앙값공백일수:Q", title="중앙값(일)"),
+                    alt.Tooltip("재입점률:Q", title="재입점률(%)"),
+                    alt.Tooltip("완결폐업수:Q", title="완결 폐업 수"),
+                ],
             )
             .properties(height=200)
         )

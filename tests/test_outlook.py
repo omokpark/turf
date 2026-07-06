@@ -85,24 +85,55 @@ def test_vacancy_recovery_gap():
     addr = "서울특별시 강남구 테스트로 1"
     df = make_roster(
         [
-            # 같은 주소: 2024-01-01 폐업 → 2024-04-10 재입점 (100일)
+            # 같은 주소: 2024-01-01 폐업(완결 관측) → 2024-04-10 재입점 (100일)
             {schema.ADDR_ROAD: addr, schema.LICENSED_AT: "2020-01-01",
              schema.CLOSED_AT: "2024-01-01", schema.IS_OPEN: False},
             {schema.ADDR_ROAD: addr, schema.LICENSED_AT: "2024-04-10"},
-            # 다른 주소: 폐업만 있고 재입점 없음 (표본 제외)
+            # 최근 폐업(2025): 24개월이 안 지나 미완결 — 통계에서 제외돼야 함
             {schema.LICENSED_AT: "2019-01-01", schema.CLOSED_AT: "2025-01-01", schema.IS_OPEN: False},
         ]
     )
     result = VacancyRecovery().compute(_ctx(df))
     assert result.current == 100.0
-    assert "재입점 1건" in result.fact.replace("재입점 완료", "재입점완료") or "1건" in result.fact
+    assert "1건" in result.fact
+    assert "재입점률 100%" in result.fact
+
+
+def test_vacancy_recovery_window_cap_excludes_unrelated_relicense():
+    """24개월 넘어 들어온 인허가는 재입점이 아니다 — 20년 공백이 중앙값을 부풀리던 버그의 회귀 테스트."""
+    addr = "서울특별시 강남구 테스트로 2"
+    df = make_roster(
+        [
+            # 2000-01-01 폐업 → 2015년 인허가: 15년 공백은 재입점으로 안 친다
+            {schema.ADDR_ROAD: addr, schema.LICENSED_AT: "1995-01-01",
+             schema.CLOSED_AT: "2000-01-01", schema.IS_OPEN: False},
+            {schema.ADDR_ROAD: addr, schema.LICENSED_AT: "2015-01-01"},
+        ]
+    )
+    result = VacancyRecovery().compute(_ctx(df))
+    series = result.series
+    y2000 = series[series["연도"] == 2000].iloc[0]
+    assert bool(pd.isna(y2000["중앙값공백일수"]))  # 재입점 없음
+    assert y2000["재입점률"] == 0.0
+    assert y2000["완결폐업수"] == 1
+
+
+def test_vacancy_recovery_incomplete_closures_excluded():
+    """폐업 후 24개월이 안 지난 폐업은 재입점 여부 미확정 — 표본에서 빠져야 한다."""
+    df = make_roster(
+        [{schema.LICENSED_AT: "2019-01-01", schema.CLOSED_AT: "2026-01-01", schema.IS_OPEN: False}]
+    )
+    result = VacancyRecovery().compute(_ctx(df))
+    assert pd.isna(result.current)
+    assert "완결 폐업 0건" in result.fact
+    assert len(result.series) == 0
 
 
 def test_vacancy_recovery_no_samples():
     df = make_roster([{schema.LICENSED_AT: "2020-01-01"}])
     result = VacancyRecovery().compute(_ctx(df))
     assert pd.isna(result.current)
-    assert "표본 0건" in result.fact
+    assert "완결 폐업 0건" in result.fact
 
 
 # ── 신규 생존율 ──────────────────────────────────────────────────────────────
