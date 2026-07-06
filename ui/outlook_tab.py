@@ -20,7 +20,8 @@ import signals.age_mix  # noqa: F401
 import signals.cohort_survival  # noqa: F401
 import signals.liquor_shift  # noqa: F401
 import signals.net_momentum  # noqa: F401
-import signals.vacancy_recovery  # noqa: F401
+# vacancy_recovery(공실 회복 속도)는 제외 — 연도별 재입점 표본이 적어 중앙값 편차가
+# 너무 큼 (2026-07-06 사용자 결정). 주소키가 건물 단위로 정교해지는 Phase 5에서 재평가.
 
 # 색: dataviz 검증 통과 쌍 (CVD ΔE 27.6) — 개업=녹색, 폐업=주황. #c0392b는 '주목' 전용.
 COLOR_OPEN = "#1a7f5c"
