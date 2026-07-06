@@ -142,7 +142,7 @@ turf/
 - [x] ~~LOCALDATA CSV 3개 수동 다운로드~~ → 폐쇄 확인, 행안부 OpenAPI로 대체.
 - [x] ~~API 활용신청~~ → 기존 `.env` 데이터포털 키로 **3개 업종 모두 즉시 호출 성공** (신청 불필요였음).
 - [x] 엔드포인트·파라미터·응답 필드 실측 확정 (위 "데이터 소스 현황" 참고) → `datasources/moi_api.py` 설계 반영 준비 완료.
-- [ ] 사용자: Naver Developers 키 발급 (Phase 4 전까지만).
+- [x] 사용자: Naver Developers 키 발급 → `.env`에 NAVER_CLIENT_ID/SECRET 추가, **실호출 검증 완료** (2026-07-06). 블로그 검색: postdate 필드 확인(M8 버즈 모멘텀 시계열에 사용 가능). 지역 검색: 카테고리("술집>맥주,호프")·좌표(mapx/mapy, WGS84×10⁷) 반환 — matcher 보조·업태 보정에 사용 가능. 유의: 지역 검색은 display 최대 5건.
 - 참고: `.env`의 키 이름 `SGIS_API_KEY`는 실제로는 공공데이터포털 공용 인증키 — Phase 1의 `core/config.py`에서 `DATA_GO_KR_API_KEY`로 개명 예정(하위호환 유지).
 
 ### Phase 1 — 최소 골격 (1~2일 분량)
