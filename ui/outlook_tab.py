@@ -73,8 +73,13 @@ def render_outlook(cx: float, cy: float) -> None:
     _render_indicator_cards(ctx)
 
 
-# ── ① 국면 매트릭스 ──────────────────────────────────────────────────────────
+# ── ① 국면 흐름 (미러 막대) ──────────────────────────────────────────────────
 def _render_phase_matrix(local: pd.DataFrame, ctx: AreaContext) -> None:
+    """연도별 개업(위)·폐업(아래) 미러 막대 + 순증 라인 + 국면 이모지.
+
+    처음엔 개업증감×폐업증감 사분면 산점도였으나 추상 좌표 위 궤적 읽기가 어렵다는
+    피드백으로 교체 (2026-07-06) — 시간을 x축에 두는 것이 옳았다.
+    """
     traj = phase_trajectory(local, years=6, today=ctx.now)
     if len(traj) < 2:
         st.info("국면 궤적을 그리기에 연도별 이력이 부족합니다.")
@@ -82,55 +87,60 @@ def _render_phase_matrix(local: pd.DataFrame, ctx: AreaContext) -> None:
 
     latest = traj.iloc[-1]
     st.markdown(f"#### 구역 국면 — {int(latest['연도'])}년 기준 **{latest['국면']}**")
-    st.caption("개업·폐업의 전년 대비 증감으로 본 위치. 점의 이동 경로가 구역의 흐름이다 (올해는 부분 연도라 제외).")
+    st.caption("막대 위=개업, 아래=폐업, 선=순증. 상단 이모지가 그 해의 국면 (올해는 부분 연도라 제외).")
 
-    pad_x = max(abs(traj["개업증감"]).max(), 3) * 1.4
-    pad_y = max(abs(traj["폐업증감"]).max(), 3) * 1.4
-    x_scale = alt.Scale(domain=[-pad_x, pad_x])
-    y_scale = alt.Scale(domain=[-pad_y, pad_y])
-
-    base = alt.Chart(traj)
-    # 사분면 라벨 (연한 잉크, 데이터 뒤)
-    quad = alt.Chart(
-        pd.DataFrame(
-            [
-                {"x": pad_x * 0.55, "y": -pad_y * 0.8, "라벨": "📈 확장 (개업↑ 폐업↓)"},
-                {"x": pad_x * 0.55, "y": pad_y * 0.8, "라벨": "🔄 교체 활발 (개업↑ 폐업↑)"},
-                {"x": -pad_x * 0.55, "y": pad_y * 0.8, "라벨": "📉 수축 (개업↓ 폐업↑)"},
-                {"x": -pad_x * 0.55, "y": -pad_y * 0.8, "라벨": "😴 정체 (개업↓ 폐업↓)"},
-            ]
-        )
-    ).mark_text(fontSize=12, color=COLOR_MUTED).encode(
-        x=alt.X("x:Q", scale=x_scale), y=alt.Y("y:Q", scale=y_scale), text="라벨"
+    # phase_trajectory는 증감·국면까지만 주므로 순증은 여기서 파생
+    df = traj.assign(순증=traj["개업"] - traj["폐업"])
+    df = df.assign(
+        폐업표시=-df["폐업"],
+        순증라벨=df["순증"].map(lambda v: f"{v:+d}"),
+        국면이모지=df["국면"].str.split(" ").str[0],
     )
-    zero_x = alt.Chart(pd.DataFrame({"v": [0]})).mark_rule(color="#d5d9d7").encode(x=alt.X("v:Q", scale=x_scale))
-    zero_y = alt.Chart(pd.DataFrame({"v": [0]})).mark_rule(color="#d5d9d7").encode(y=alt.Y("v:Q", scale=y_scale))
-
-    path = base.mark_line(strokeWidth=2, color=COLOR_MUTED, opacity=0.7).encode(
-        x=alt.X("개업증감:Q", scale=x_scale, title="개업 증감 (전년 대비 곳)"),
-        y=alt.Y("폐업증감:Q", scale=y_scale, title="폐업 증감 (전년 대비 곳)"),
-        order="연도:O",
-    )
+    top = float(df["개업"].max()) * 1.25  # 국면 이모지 자리
+    y_scale = alt.Scale(domain=[float(df["폐업표시"].min()) * 1.15, top * 1.08])
+    y_axis = alt.Axis(labelExpr="abs(datum.value)", title="폐업 ↓ 곳 ↑ 개업")
     tooltip = [
         alt.Tooltip("연도:O"),
         alt.Tooltip("개업:Q"),
         alt.Tooltip("폐업:Q"),
-        alt.Tooltip("개업증감:Q", title="개업 증감"),
-        alt.Tooltip("폐업증감:Q", title="폐업 증감"),
+        alt.Tooltip("순증:Q"),
         alt.Tooltip("국면:N"),
     ]
-    points = base.mark_circle(size=90, color=COLOR_OPEN).encode(
-        x=alt.X("개업증감:Q", scale=x_scale), y=alt.Y("폐업증감:Q", scale=y_scale), tooltip=tooltip
+    base = alt.Chart(df)
+
+    # 범례용 색 인코딩을 쓰기 위해 개업/폐업을 long 형태로도 준비
+    bars_long = df.melt(
+        id_vars=["연도", "개업", "폐업", "순증", "국면"], value_vars=["개업", "폐업표시"],
+        var_name="구분", value_name="표시값",
     )
-    latest_point = (
-        alt.Chart(traj.tail(1))
-        .mark_circle(size=220, color=COLOR_ACCENT)
-        .encode(x=alt.X("개업증감:Q", scale=x_scale), y=alt.Y("폐업증감:Q", scale=y_scale), tooltip=tooltip)
+    bars_long["구분"] = bars_long["구분"].map({"개업": "개업", "폐업표시": "폐업"})
+    bars = (
+        alt.Chart(bars_long)
+        .mark_bar(size=28, cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+        .encode(
+            x=alt.X("연도:O", title=None, axis=alt.Axis(labelAngle=0)),
+            y=alt.Y("표시값:Q", scale=y_scale, axis=y_axis),
+            color=alt.Color(
+                "구분:N",
+                scale=alt.Scale(domain=["개업", "폐업"], range=[COLOR_OPEN, COLOR_CLOSE]),
+                legend=alt.Legend(orient="top", title=None),
+            ),
+            tooltip=tooltip,
+        )
     )
-    year_labels = base.mark_text(dy=-13, fontSize=11, color="#4a4f4d").encode(
-        x=alt.X("개업증감:Q", scale=x_scale), y=alt.Y("폐업증감:Q", scale=y_scale), text="연도:O"
+    zero = alt.Chart(pd.DataFrame({"v": [0]})).mark_rule(color="#d5d9d7").encode(
+        y=alt.Y("v:Q", scale=y_scale)
     )
-    chart = (quad + zero_x + zero_y + path + points + latest_point + year_labels).properties(height=340)
+    net_line = base.mark_line(strokeWidth=2, color="#4a4f4d", point=alt.OverlayMarkDef(size=55, color="#4a4f4d")).encode(
+        x="연도:O", y=alt.Y("순증:Q", scale=y_scale), tooltip=tooltip
+    )
+    net_labels = base.mark_text(dy=-14, fontSize=11, color="#4a4f4d").encode(
+        x="연도:O", y=alt.Y("순증:Q", scale=y_scale), text="순증라벨:N"
+    )
+    phase_emoji = base.mark_text(fontSize=16).encode(
+        x="연도:O", y=alt.value(14), text="국면이모지:N", tooltip=tooltip
+    )
+    chart = (bars + zero + net_line + net_labels + phase_emoji).properties(height=340)
     st.altair_chart(chart, width="stretch")
 
 
