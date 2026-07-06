@@ -197,8 +197,16 @@ Day 11 후반 (Phase 3 — 구조 정리, 같은 세션에서 진행):
 - 검증: pytest 60개 그린(신규 `tests/test_semas.py` 골든 4개 포함). 실 API 골든 — main.py(Provider 경유)가 Day 1 콘솔 출력과 수치 완전 동일. 강남역 파일 캐시 5,840행/캐시 히트 0.02s. 앱 기동 에러 없음.
 - 함정 기록: 전-NaT datetime 컬럼은 s 단위로 추론돼 parquet 왕복 시 ms로 바뀜 → semas 어댑터에서 ns 명시. AREA_M2도 float 명시(왕복 후 object None 방지).
 
-▶ 다음 세션 시작점: 브라우저 스모크 3건(Phase 2 국면 방향, Phase 2b 상위 30건, Phase 3 Day 8 동작 체크리스트 — 원 드래그·엣지 리사이즈·원 밖 클릭·업종 필터·CSV·토스트) 후 **Phase 4 (Naver 평판 축 — matching/ + M8 버즈 모멘텀 + M1 목적지 지수 Naver판)**. 데이터는 `data/cache/moi/{업종}/3220000.parquet` (gitignore라 PC마다 `python -m datasources.build_index --district 3220000`로 재수집).
+Day 11 마무리 (Phase 4 — Naver 평판 축, 같은 세션에서 진행. Phase 3 브라우저 스모크는 사용자 확인 완료):
+- `matching/normalize.py`(상호 정규화 단일 출처 — franchise의 임시 버전 이관·확장, 과제거 시 원형 유지) + `matching/matcher.py`(30m 격자 블로킹, rapidfuzz×거리 감쇠, 임계 0.82 보수적, 1:1 greedy — 통합 업소 테이블의 기초, UI 실사용은 추후).
+- `datasources/naver.py`: 블로그 검색 + 주소 토큰 필수(동>로/길>구 — 동명 오매칭 방어) + 7일 파일 캐시 + 레이트 슬립. signals: `buzz_momentum.py`(M8 — 골든타임만 조회, 쿼터 방어를 테스트로 강제), `review_momentum.py`(R=log(1+블로그6개월)/업력) → `scorers/destination_index.py`(M1 Naver판).
+- **M1 입지 기대치 E**: SGIS 키 부재로 원안(유동 십분위) 대신 **업소 밀집도 십분위(300m) 프록시**. 코호트 폴백 = (업태×십분위)→십분위→전체 — 업태 평균 폴백은 음영지역 외톨이를 번화가 평균과 비교해 눌러버리는 결함이 테스트로 확인돼 배제.
+- ranking 탭: 랭킹 기준 radio(가중합↔목적지 지수), Naver 키 있으면 평판 신호 자동 활성. pytest 71개 그린.
+- 강남역 400m 실측: 453곳 전수 조회(캐시 674건), 블로그 관측 421곳. **목적지 지수 6위 '지안식당' = 밀집도 1/10 구간에서 블로그 100건 — 음영지역 숨은 잠재 업소 가설의 첫 실물 사례.** 버즈: 개업 98일차 블로그 100건(샐러링) 등 9곳.
+- 이 PC `.env`에 NAVER 키 2개 추가됨(회사 PC와 별개로 재입력 필요했음 — .env는 gitignore).
 
-아직 안 한 것: REDESIGN_PLAN.md Phase 4~6 (Naver 평판 축 → 확장 모델·증분 갱신 → Places).
+▶ 다음 세션 시작점: 목적지 지수 상위권 육안 검증(아는 지역에서 "진짜 찾아가는 집"인지) → **M1 가설 판단 → Places 결제 투입 여부 결정** (REDESIGN_PLAN Phase 4 잔여 체크박스). 그 다음 **Phase 5 (확장 모델 M3/M6/M7 + 증분 갱신 + M4 전국 스캔)**.
 
-Day 11까지의 변경분은 모두 커밋·푸시 완료. 새 PC에서는 clone/pull 후 `.env` 채우고(NAVER 키 2개 추가됨) `pip install -r requirements.txt` 하면 이어서 작업 가능.
+아직 안 한 것: REDESIGN_PLAN.md Phase 5~6 (확장 모델·증분 갱신 → Places 완전판). 매칭 임계 튜닝(수작업 라벨 50쌍)은 matcher 실사용 시점에.
+
+Day 11까지의 변경분은 모두 커밋·푸시 완료. 새 PC에서는 clone/pull 후 `.env` 채우고(NAVER 키 2개 포함 4개) `pip install -r requirements.txt`(rapidfuzz 추가) 하면 이어서 작업 가능.

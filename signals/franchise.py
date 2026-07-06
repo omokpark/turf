@@ -9,31 +9,17 @@
 `ctx.reference`(수집된 범위, 현재는 자치단체 단위)를 기준으로 계산하고 배지에 그
 범위를 명시한다 — 관측 사실만 말한다는 원칙상 "전국 기준"이라고 과장하지 않는다.
 
-상호명 정규화는 matching/normalize.py(Phase 4 예정) 도입 전 임시 근사치다: 괄호 안
-내용과 흔한 지점명 접미사(역/점/지점 등)를 제거하는 정도로, 완전한 지점명 분리는
-아니다.
+상호명 정규화는 matching/normalize.py를 쓴다 (Phase 4에서 단일 출처화).
 """
-
-import re
 
 import pandas as pd
 
 from core import schema
+from matching.normalize import normalize_name
 from signals.base import AreaContext, BADGE, DETAIL, EST_ID, RAW, SIGNAL_COLUMNS, VALUE
 from signals.registry import register_signal
 
 CHAIN_THRESHOLD = 3  # 정규화 상호가 이 횟수 이상 출현하면 체인으로 간주
-
-_PAREN_RE = re.compile(r"[\(（].*?[\)）]")
-_BRANCH_SUFFIX_RE = re.compile(r"(역점|본점|직영점|지점|점)$")
-
-
-def normalize_name(name: str) -> str:
-    """상호명에서 지점명 흔적을 대략 제거한다 (완전한 정규화는 아님, 임시 근사치)."""
-    n = _PAREN_RE.sub("", str(name)).strip()
-    n = re.sub(r"\s+", "", n)
-    n = _BRANCH_SUFFIX_RE.sub("", n)
-    return n or str(name)
 
 
 def _normalize_series(s: pd.Series) -> pd.Series:

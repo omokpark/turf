@@ -175,12 +175,18 @@ turf/
 - [x] `datasources/semas.py`(shop_fetcher → ROSTER 어댑터, validate_roster 강제) + `cache.py`(격자 스냅 키+TTL parquet 파일 캐시 — 세션을 넘어 재사용, 강남역 450m 5,840행 캐시 히트 0.02s). explore 페이지·main.py Provider 경유 전환. `collector/categories.py` 삭제.
 - [x] analyzer/terrain·presenter/report를 schema 상수로 전환(by_category 컬럼 '상권업종소분류명'→schema.CAT_S). analyze는 ROSTER DataFrame/list[dict] 겸용.
 - [x] 골든 테스트: `tests/test_semas.py` — Provider 경유 == 직접 호출 집계 동일(합성), 격자 캐시 재사용/TTL 만료. **실 API 골든**: main.py가 Day 1 콘솔 출력과 완전 동일(경복궁 500m 총 232곳, 카페 61곳 26.3% 등). pytest 60개 그린.
-- [ ] Day 8 확정 동작 브라우저 스모크(사용자): 원 드래그, 엣지 리사이즈 50m 스냅, 원 밖 클릭 점프, 업종 필터, CSV, 재분석 토스트.
+- [x] Day 8 확정 동작 브라우저 스모크(사용자 확인 2026-07-06): 원 드래그, 엣지 리사이즈 50m 스냅, 원 밖 클릭 점프, 업종 필터, CSV, 재분석 토스트.
 
-### Phase 4 — 평판 축 (Naver)
-- [ ] `matching/normalize.py`+`matcher.py`(30m 격자 블로킹, rapidfuzz, 보수적 임계 — 오병합보다 미병합), `datasources/naver.py`(캐시 TTL 7일).
-- [ ] signals: `buzz_momentum.py`(M8 — 골든타임 리스트만 조회로 쿼터 방어), `review_momentum.py`+`location_expectation.py`(SGIS) → `scorers/destination_index.py`(M1 Naver판).
-- 검증: 매칭 수작업 라벨 50쌍으로 임계 튜닝, 목적지 지수 상위권 육안 검증. **여기서 M1 가설을 무료로 검증 → Places 결제 투입 여부 최종 판단.**
+### Phase 4 — 평판 축 (Naver) — ✅ 구현 완료 (2026-07-06), 육안 검증·임계 튜닝 잔여
+- [x] `matching/normalize.py`(법인·괄호·말미 지점명 제거, 과제거 시 원형 유지 — franchise의 임시 정규화를 단일 출처로 이관) + `matcher.py`(30m 격자 블로킹, rapidfuzz×거리 감쇠 0.7:0.3, 60m 거리 상한, 1:1 greedy, 임계 0.82 보수적). rapidfuzz 의존성 추가.
+- [x] `datasources/naver.py`: 블로그 검색 + **주소 토큰 필수**(지번 동 > 도로명 로/길 > 구 — 동명 업소 오매칭 방어, 토큰 없으면 조회 안 함) + 7일 파일 캐시 + 0.06s 레이트 슬립·재시도.
+- [x] signals: `buzz_momentum.py`(M8 — 골든타임 180일 이내만 조회, 쿼터 방어를 테스트로 강제), `review_momentum.py`(R = log(1+블로그 6개월)/업력년, VALUE=반경 내 백분위) → `scorers/destination_index.py`(M1 Naver판).
+- [x] **M1 입지 기대치 E의 설계 변경**: 원안 SGIS 유동 십분위 → SGIS 키 부재로 **주변 업소 밀집도 십분위(300m) 프록시**. 코호트 폴백 사슬 = (업태×십분위) → 같은 십분위 전체 → 구역 전체 — 업태 평균 폴백은 음영지역 외톨이 업소를 번화가 평균과 비교해 눌러버리는 결함이 테스트에서 확인되어 배제. 블로그 미관측(R=0) 업소는 점수 제외(배지 없는 점수 금지와 일치).
+- [x] ranking 탭: 랭킹 기준 선택(가중합 ↔ 목적지 지수 radio), Naver 키 있으면 평판 신호 자동 활성(providers 가용성), 스피너 안내. pytest 71개 그린.
+- [x] 강남역 400m 실측: 영업 453곳 전수 조회(7일 캐시 674건 적재), 블로그 관측 421곳. 목적지 지수 상위에 **밀집도 1/10 구간에서 블로그 100건인 '지안식당'** 등장 — 음영지역 숨은 잠재 업소 가설의 첫 실물 사례. 버즈 모멘텀: 개업 98일차 블로그 100건(샐러링) 등 골든타임 9곳 포착.
+- [ ] 매칭 수작업 라벨 50쌍으로 임계 튜닝 (matcher가 통합 업소 테이블에 실사용되는 시점에).
+- [ ] 목적지 지수 상위권 육안 검증(사용자) → **M1 가설 판단 → Places 결제 투입 여부 최종 결정.**
+- 한계(투명): 블로그 수는 display 100 캡(log로 완화), E는 유동이 아니라 업소 밀집도 프록시(SGIS 키 확보 시 교체), 체험단 인플레 미보정(포스팅 지속성은 Phase 5+).
 
 ### Phase 5 — 확장 모델 + 증분 갱신
 - [ ] signals: `growth_momentum.py`(M3), `conversion_vector.py`(M6, 주소키 강화 포함), `night_index.py`(M7 v1).
