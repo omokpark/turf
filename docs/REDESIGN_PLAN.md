@@ -117,9 +117,15 @@ turf/
   - 단란주점영업 조회서비스: data ID 15154883
   - 유흥주점영업 조회서비스: data ID 15154890
   - (필요 시 휴게음식점 15154921, 제과점영업 15155252 등 동일 계열)
-  - 공통 스펙: REST, JSON+XML, **일간 갱신**, 무료, 활용신청 자동승인, 트래픽 개발계정 10,000/일. 좌표는 여전히 EPSG:5174(→ 기존 pyproj 변환 로직 재사용). 참고문서 "개방자치단체코드_영업상태코드.xlsx" 존재 → 자치단체코드 단위 조회 가능성 높음(구 LOCALDATA API 파라미터 체계 계승 추정).
-  - 미확정: 정확한 엔드포인트·요청 파라미터는 페이지의 Swagger에만 있음 → **활용신청 후 첫 호출로 확정** (Phase 1 착수 시).
-  - 유의: 구 파일 루트(file.localdata.go.kr)는 사망, data.go.kr의 구 파일데이터 페이지(15045016 등)도 그 죽은 링크를 가리키는 stale 상태(2025-11-27 수정). 대량 초기 적재도 API 페이징으로 수행 — 전국 일반음식점 약 213만 행이므로 M4(전국 스캔)는 페이지 크기·트래픽 한도 확인 후 설계.
+  - 공통 스펙: REST, JSON+XML, **일간 갱신**, 무료, 트래픽 개발계정 10,000/일. 좌표는 여전히 EPSG:5174(→ 기존 pyproj 변환 로직 재사용).
+  - **✅ 실호출 검증 완료 (2026-07-06, 기존 .env의 데이터포털 키로 3개 업종 모두 즉시 동작 — 추가 활용신청 불필요였음)**:
+    - 엔드포인트: `https://apis.data.go.kr/1741000/{general_restaurants|singing_bars|entertainment_bars}/info`
+    - 파라미터: `serviceKey, pageNo, numOfRows(max 100), returnType(json|xml)` + 필터 `cond[LCPMT_YMD::GTE/LT]`(인허가일자 범위), `cond[SALS_STTS_CD::EQ]`(영업상태), `cond[OPN_ATMY_GRP_CD::EQ]`(개방자치단체코드), `cond[DAT_UPDT_PNT::GTE/LT]`(갱신시점 — 증분), `cond[BPLC_NM::LIKE]`, `cond[ROAD_NM_ADDR::LIKE]`, `cond[BASE_DATE::EQ]`(기준일자 시점 상태)
+    - 응답 필드: BPLC_NM(사업장명), BZSTAT_SE_NM(업태구분명), LCPMT_YMD(인허가일자), **CLSBIZ_YMD(폐업일자)**, SALS_STTS_CD/NM(영업상태), LCTN_AREA(소재지면적), ROAD_NM_ADDR/LOTNO_ADDR, CRD_INFO_X/Y(EPSG:5174), OPN_ATMY_GRP_CD, MNG_NO, DAT_UPDT_PNT 외 다수(종사자수·보증액·월세액 등)
+    - 실측: 일반음식점 총 2,464,424건(폐업 1,732,263건 포함 — **과거 이력 전체 보존, 시계열 가능 확정**). 연도별 개업 필터 동작: 2023년 79,291 / 2024년 74,256 / 2025년 69,605건. 강남구(3220000) 51,071건. 단란주점 44,375건, 유흥주점 58,774건.
+  - 트래픽 산식: numOfRows 최대 100 → 자치단체 1곳 전체 적재 ≈ 300~600 호출(일 한도 내 여유). **전국 전체 스캔(M4 프랜차이즈 판별)은 약 24,600 호출 → 3일 분할 배치 또는 운영계정 트래픽 증가 신청 필요.**
+  - ⚠️ 신규 인허가 건은 좌표가 공백일 수 있음(2026-07-03 개업 건에서 확인) — 최근 개업 신호(골든타임)에는 VWorld 지오코딩 폴백 필요.
+  - 유의: 구 파일 루트(file.localdata.go.kr)는 사망, data.go.kr의 구 파일데이터 페이지(15045016 등)도 그 죽은 링크를 가리키는 stale 상태.
 - **식약처 식품접객업 API**: 위 행안부 API가 일간 갱신이므로 **증분 보완 채널로서의 필요성 소멸** — 보류. `scripts/verify_mfds_api.py`는 예비 폴백으로만 유지.
 - **Naver**: 지역검색 일 25,000 무료 + 블로그 검색 → 리뷰 모멘텀 무료 프록시.
 - **SGIS**: 격자 인구·사업체 무료 전국 → 입지 기대치 분모.
@@ -131,12 +137,13 @@ turf/
 
 각 단계 종료 시 앱은 항상 동작 상태. 단계 = 커밋 단위.
 
-### Phase 0 — 준비 (사용자 병행) — ⚠️ LOCALDATA 폐쇄로 개정 (2026-07-06)
+### Phase 0 — 준비 — ✅ 완료 (2026-07-06)
 - [x] 이 계획서를 `docs/REDESIGN_PLAN.md`로 저장.
-- [x] ~~LOCALDATA CSV 3개 수동 다운로드~~ → 폐쇄 확인. 대체: 아래 API 활용신청.
-- [ ] 사용자: data.go.kr 로그인 → **일반음식점(15154916)·단란주점(15154883)·유흥주점(15154890) 조회서비스 3건 활용신청** (자동승인, 기존 계정의 인증키 사용).
-- [ ] 사용자: Naver Developers 키 발급 (Phase 4 전까지).
-- [ ] Claude: 활용신청 승인 후 첫 호출로 엔드포인트·파라미터 확정 → `datasources/moi_api.py` 설계 반영.
+- [x] ~~LOCALDATA CSV 3개 수동 다운로드~~ → 폐쇄 확인, 행안부 OpenAPI로 대체.
+- [x] ~~API 활용신청~~ → 기존 `.env` 데이터포털 키로 **3개 업종 모두 즉시 호출 성공** (신청 불필요였음).
+- [x] 엔드포인트·파라미터·응답 필드 실측 확정 (위 "데이터 소스 현황" 참고) → `datasources/moi_api.py` 설계 반영 준비 완료.
+- [ ] 사용자: Naver Developers 키 발급 (Phase 4 전까지만).
+- 참고: `.env`의 키 이름 `SGIS_API_KEY`는 실제로는 공공데이터포털 공용 인증키 — Phase 1의 `core/config.py`에서 `DATA_GO_KR_API_KEY`로 개명 예정(하위호환 유지).
 
 ### Phase 1 — 최소 골격 (1~2일 분량)
 - [ ] `core/schema.py`(컬럼 상수)·`core/config.py`·`core/area.py`(거리/격자 유틸 통합).
