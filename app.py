@@ -23,6 +23,7 @@ from analyzer.terrain import analyze
 from collector.geocoder import geocode_address, search_places
 from collector.shop_fetcher import fetch_shops
 from presenter.report import generate_report
+from ui.outlook_tab import render_outlook
 
 GANGNAM_STATION = (127.027619, 37.497925)  # (cx, cy)
 CENTER_COLOR = "#3388ff"  # 반경 원 색상
@@ -213,7 +214,11 @@ with st.sidebar:
 
 category_colors = {cat: CATEGORY_PALETTE[i % len(CATEGORY_PALETTE)] for i, cat in enumerate(selected_categories)}
 
-tab_map, tab_stats = st.tabs(["🗺️ 지도", "📊 업종 구성"])
+tab_map, tab_stats, tab_outlook = st.tabs(["🗺️ 지도", "📊 업종 구성", "📈 구역 아웃룩"])
+
+# ── 탭 3: 구역 아웃룩 (M0) — 이 구역이 어떤 국면인지 (인허가 이력 기반) ────────
+with tab_outlook:
+    render_outlook(st.session_state.cx, st.session_state.cy)
 
 # ── 탭 1: 지도 — 밀집도·분포의 직관적 파악 + 중심·반경 조작 ─────────────────
 with tab_map:

@@ -23,6 +23,7 @@ MAX_RADIUS_M = 400
 FETCH_RADIUS_M = MAX_RADIUS_M + 50  # 프리페치 여유 — 격자 스냅 오차(≤21m) 흡수
 FETCH_GRID_M = 30
 WALK_SPEED_M_PER_MIN = 70
+OUTLOOK_RADIUS_M = 800  # 구역 아웃룩 전용 — 도보 상권(≤400m)보다 넓은 '담당 구역' 스케일
 
 
 @dataclass(frozen=True)
