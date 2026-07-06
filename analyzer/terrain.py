@@ -1,19 +1,27 @@
-"""업종별 집계·통계"""
+"""업종별 집계·통계
+
+입력은 ROSTER 스키마(core/schema.py)를 따르는 DataFrame 또는 그 dict 리스트다.
+소스별 컬럼명(SEMAS 상권업종소분류명 등) → schema 상수 변환은 datasource 어댑터
+(datasources/semas.py 등)의 책임이고, 여기는 schema 상수만 쓴다 (Phase 3 전환).
+"""
 
 import pandas as pd
 
-COLUMNS = ["상호", "상권업종대분류명", "상권업종중분류명", "상권업종소분류명", "도로명주소", "위도", "경도"]
+from core import schema
 
 
-def analyze(shops: list[dict], my_category: str | None = None) -> dict:
-    """상가업소 리스트에서 음식점만 골라 업종 소분류 기준으로 집계한다."""
-    # columns를 명시해 shops가 빈 리스트여도(반경 내 업소 0곳) KeyError 없이 빈 집계를 반환한다.
-    df = pd.DataFrame(shops, columns=COLUMNS)
-    food_df = df[df["상권업종대분류명"] == "음식"]
+def analyze(shops: pd.DataFrame | list[dict], my_category: str | None = None) -> dict:
+    """명부에서 음식점만 골라 업종 소분류 기준으로 집계한다."""
+    if isinstance(shops, pd.DataFrame):
+        # columns를 명시해 빈 DataFrame이어도(반경 내 업소 0곳) KeyError 없이 빈 집계를 반환한다.
+        df = shops.reindex(columns=schema.ROSTER_COLUMNS)
+    else:
+        df = pd.DataFrame(shops, columns=schema.ROSTER_COLUMNS)
+    food_df = df[df[schema.CAT_L] == "음식"]
     total = len(food_df)
 
     by_category = (
-        food_df.groupby("상권업종소분류명")
+        food_df.groupby(schema.CAT_S)
         .size()
         .reset_index(name="개수")
         .sort_values("개수", ascending=False)
@@ -25,7 +33,7 @@ def analyze(shops: list[dict], my_category: str | None = None) -> dict:
     my_count = 0
     my_pct = 0.0
     if my_category:
-        match = by_category[by_category["상권업종소분류명"] == my_category]
+        match = by_category[by_category[schema.CAT_S] == my_category]
         if not match.empty:
             idx = match.index[0]
             my_rank = idx + 1

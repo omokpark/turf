@@ -1,17 +1,18 @@
-"""analyzer/terrain.analyze — 기존 동작의 회귀 기준선"""
+"""analyzer/terrain.analyze — 기존 동작의 회귀 기준선 (Phase 3에서 schema 상수로 전환)"""
 
 from analyzer.terrain import analyze
+from core import schema
 
 
 def _shop(name, small_cat, large="음식"):
     return {
-        "상호": name,
-        "상권업종대분류명": large,
-        "상권업종중분류명": "",
-        "상권업종소분류명": small_cat,
-        "도로명주소": "서울 강남구",
-        "위도": 37.5,
-        "경도": 127.0,
+        schema.NAME: name,
+        schema.CAT_L: large,
+        schema.CAT_M: "",
+        schema.CAT_S: small_cat,
+        schema.ADDR_ROAD: "서울 강남구",
+        schema.LAT: 37.5,
+        schema.LON: 127.0,
     }
 
 
@@ -29,7 +30,7 @@ def test_analyze_counts_food_only():
     result = analyze(SHOPS)
     assert result["total"] == 5
     top = result["by_category"].iloc[0]
-    assert top["상권업종소분류명"] == "한식"
+    assert top[schema.CAT_S] == "한식"
     assert top["개수"] == 3
     assert top["비율"] == 60.0
 

@@ -170,10 +170,12 @@ turf/
 - **랭킹 정책 확정 (사용자 피드백 2026-07-06, 2회 반영)**: ① 초기 버전이 장수 업소 순위가 되는 문제 → `recent_opening` 신호 추가(가중 1.5, "개업 직후 = 공급사 결정 시점"이라는 M8 전제의 무료 선반영). ② 그래도 노포가 높고 프랜차이즈 제외가 과하다는 피드백 → 생존자 지수를 자리 평균 도달에서 **포화**(MAX_RATIO 2.0→1.0, 나이 단조성 제거)·가중 0.5로 인하, **franchise는 가중 0(점수 미반영, 체인 추정 정보 배지만)**. "독립 업소로 추정" 배지는 노이즈라 제거(체인일 때만 배지).
 - 부산물: weighted_sum이 배지 None→NaN(truthy)을 배지로 수집하던 잠재 버그 수정(pd.notna 가드). 신규 인허가 건 대응 위해 python.org 파이썬의 Install Certificates 미실행 시 urllib SSL 실패함을 확인(트러블슈팅 기록 — moi_api는 urllib 사용).
 
-### Phase 3 — 구조 정리 (랭킹 화면 검증 후)
-- [ ] app.py → `ui/` 분해: state/sidebar/map_view/components/pages, 인라인 JS는 `map_interactions.js`로 격리(string.Template 주입), JS↔파이썬 채널 양끝을 `channels.py`에 집약. streamlit-folium 버전 상한 고정.
-- [ ] `datasources/semas.py`(기존 shop_fetcher 래핑) + `cache.py`, explore 페이지 Provider 경유 전환. `collector/categories.py` 삭제.
-- 검증: 골든 테스트(Provider 경유 == 기존 직접 호출) + Day 8 확정 동작 스모크 체크리스트(원 드래그, 엣지 리사이즈 50m 스냅, 원 밖 클릭 점프, 업종 필터, CSV).
+### Phase 3 — 구조 정리 — ✅ 구현 완료 (2026-07-06), 브라우저 스모크 잔여
+- [x] app.py(573줄) → 얇은 진입점(70줄) + `ui/` 분해: `state.py`(세션·UI 상수)·`sidebar.py`·`map_view.py`·`channels.py`(JS↔파이썬 채널 양끝 집약)·`components/{charts,shop_table}.py`·`pages/{explore,outlook,changes,ranking}.py`(기존 *_tab.py는 git mv). 인라인 JS는 `ui/map_interactions.js`로 격리(string.Template, $min_r/$max_r 주입). streamlit-folium `<0.28` 상한 고정(0.27.x 검증).
+- [x] `datasources/semas.py`(shop_fetcher → ROSTER 어댑터, validate_roster 강제) + `cache.py`(격자 스냅 키+TTL parquet 파일 캐시 — 세션을 넘어 재사용, 강남역 450m 5,840행 캐시 히트 0.02s). explore 페이지·main.py Provider 경유 전환. `collector/categories.py` 삭제.
+- [x] analyzer/terrain·presenter/report를 schema 상수로 전환(by_category 컬럼 '상권업종소분류명'→schema.CAT_S). analyze는 ROSTER DataFrame/list[dict] 겸용.
+- [x] 골든 테스트: `tests/test_semas.py` — Provider 경유 == 직접 호출 집계 동일(합성), 격자 캐시 재사용/TTL 만료. **실 API 골든**: main.py가 Day 1 콘솔 출력과 완전 동일(경복궁 500m 총 232곳, 카페 61곳 26.3% 등). pytest 60개 그린.
+- [ ] Day 8 확정 동작 브라우저 스모크(사용자): 원 드래그, 엣지 리사이즈 50m 스냅, 원 밖 클릭 점프, 업종 필터, CSV, 재분석 토스트.
 
 ### Phase 4 — 평판 축 (Naver)
 - [ ] `matching/normalize.py`+`matcher.py`(30m 격자 블로킹, rapidfuzz, 보수적 임계 — 오병합보다 미병합), `datasources/naver.py`(캐시 TTL 7일).

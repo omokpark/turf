@@ -191,8 +191,14 @@ Day 11 (Phase 2b — 무료 업소 모델 + 변화·방문 우선순위 탭, 이
 - ⚠️ 트러블슈팅 기록: python.org 파이썬은 설치 후 `/Applications/Python 3.xx/Install Certificates.command`를 실행해야 urllib SSL이 동작한다(미실행 시 `CERTIFICATE_VERIFY_FAILED` — requests는 certifi 내장이라 멀쩡해서 원인을 놓치기 쉬움). moi_api가 urllib 사용.
 - 잔여 알려진 한계: franchise 판별이 수집 자치단체 범위 기준이라 대형 체인 배지 누락 가능(전국 스캔은 Phase 5), 점수 미반영이라 실해는 없음.
 
-▶ 다음 세션 시작점: `docs/REDESIGN_PLAN.md` Phase 체크박스 확인 → 잔여 육안 검증 2건(Phase 2 국면 방향, Phase 2b 상위 30건 스팟체크) 후 **Phase 3 (구조 정리 — app.py 분해)** 또는 **Phase 4 (Naver 평판 축)**. 데이터는 `data/cache/moi/{업종}/3220000.parquet` (강남구, gitignore라 PC마다 `python -m datasources.build_index --district 3220000`로 재수집).
+Day 11 후반 (Phase 3 — 구조 정리, 같은 세션에서 진행):
+- app.py(573줄) → 얇은 진입점(70줄). 분해 결과: `ui/state.py`(세션 키·UI 상수 단일 출처), `ui/sidebar.py`, `ui/map_view.py`, `ui/channels.py`(last_clicked·TURF_RADIUS 툴팁 채널 해석 집약), `ui/components/{charts,shop_table}.py`, `ui/pages/{explore,outlook,changes,ranking}.py`(기존 ui/*_tab.py는 git mv). 인라인 JS ~120줄은 `ui/map_interactions.js`로 격리(string.Template — %-format의 `%%` 함정 제거).
+- 데이터 계층: `datasources/semas.py`(fetch_shops → ROSTER 어댑터) + `datasources/cache.py`(격자 스냅+TTL parquet 파일 캐시, st.cache_data 대체 — 프로세스 재시작을 넘어 유지). analyzer/presenter는 schema 상수로 전환(**by_category 컬럼명이 '상권업종소분류명'→'업종소'로 변경됨** — 이후 코드는 schema.CAT_S 사용). `collector/categories.py` 삭제, streamlit-folium `<0.28` 상한 고정.
+- 검증: pytest 60개 그린(신규 `tests/test_semas.py` 골든 4개 포함). 실 API 골든 — main.py(Provider 경유)가 Day 1 콘솔 출력과 수치 완전 동일. 강남역 파일 캐시 5,840행/캐시 히트 0.02s. 앱 기동 에러 없음.
+- 함정 기록: 전-NaT datetime 컬럼은 s 단위로 추론돼 parquet 왕복 시 ms로 바뀜 → semas 어댑터에서 ns 명시. AREA_M2도 float 명시(왕복 후 object None 방지).
 
-아직 안 한 것: REDESIGN_PLAN.md Phase 3~6 (app.py 분해 → Naver 평판 축(M1 목적지 지수 Naver판·M8) → 확장 모델·증분 갱신 → Places).
+▶ 다음 세션 시작점: 브라우저 스모크 3건(Phase 2 국면 방향, Phase 2b 상위 30건, Phase 3 Day 8 동작 체크리스트 — 원 드래그·엣지 리사이즈·원 밖 클릭·업종 필터·CSV·토스트) 후 **Phase 4 (Naver 평판 축 — matching/ + M8 버즈 모멘텀 + M1 목적지 지수 Naver판)**. 데이터는 `data/cache/moi/{업종}/3220000.parquet` (gitignore라 PC마다 `python -m datasources.build_index --district 3220000`로 재수집).
+
+아직 안 한 것: REDESIGN_PLAN.md Phase 4~6 (Naver 평판 축 → 확장 모델·증분 갱신 → Places).
 
 Day 11까지의 변경분은 모두 커밋·푸시 완료. 새 PC에서는 clone/pull 후 `.env` 채우고(NAVER 키 2개 추가됨) `pip install -r requirements.txt` 하면 이어서 작업 가능.
