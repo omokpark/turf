@@ -1,0 +1,194 @@
+# turf 전면 재개정 계획 — 주류 영업 인텔리전스 플랫폼
+
+> 작성: 2026-07-06 (Day 10). 각 Phase 완료 시 이 문서의 체크박스와 claude.md 진행 상황을 함께 갱신할 것.
+
+## Context
+
+Day 9에 서비스가 "상권 지형 조회"에서 **"주류회사 영업사원용 잠재 업소 발굴 도구"**로 피벗됐으나, 코드는 여전히 반경 내 업종 빈도 집계기에 머물러 있다. 핵심 자산인 timeline/(인허가 시계열 엔진)은 UI에 미연동 고립 상태, app.py는 555줄 단일 파일(인라인 JS ~120줄 포함), 스키마는 암묵적 한글 컬럼 계약(SEMAS `상호` vs LOCALDATA `사업장명`), 분석 모델을 추가할 자리가 없다.
+
+이번 재개정의 목표: **"새 분석 모델 추가 = 파일 1개"가 되는 플러그인 구조**를 세우고, 그 위에 구역 아웃룩(M0) + 잠재 업소 발굴 모델 8종을 무료→유료 순으로 단계 탑재한다. 진행 방식은 하이브리드: 최소 골격만 세우고 무료 모델로 직행, 구조 정리는 가치 검증 후.
+
+사용자 준비 확정: LOCALDATA CSV 수동 다운로드 + Naver 키 + 식약처 키 + Google Cloud 결제 등록 전부 진행.
+
+---
+
+## 1. 목표 아키텍처
+
+### 디렉터리 구조 (최종형)
+
+```
+turf/
+├── app.py                      # 얇은 진입점 (st.navigation)
+├── core/
+│   ├── schema.py               # ★ 정규화 스키마: 컬럼 상수·검증 (한글 컬럼명 유지, 리터럴 산재 금지)
+│   ├── area.py                 # Area(cx,cy,radius) + 거리/격자/줌 유틸 (app.py·trend.py 중복 로직 흡수)
+│   └── config.py               # .env, 경로, 상수 단일 출처
+├── datasources/                # 데이터 수급 계층 (수동 CSV·API 동일 인터페이스)
+│   ├── base.py                 # Provider 프로토콜 (id, kind, cache_ttl, fetch(area), freshness(area))
+│   ├── registry.py
+│   ├── cache.py                # parquet 파일 캐시 (격자키+TTL)
+│   ├── semas.py                # 기존 collector/shop_fetcher 래핑
+│   ├── localdata_csv.py        # 기존 timeline/license_fetcher 래핑 + 시군구 파티션
+│   ├── build_index.py          # CLI: 수동 CSV → 파티션 parquet 1회 변환
+│   ├── mfds.py                 # 식약처 API 증분 갱신 (실검증 후)
+│   └── naver.py                # Naver 지역/블로그 검색
+├── matching/
+│   ├── normalize.py            # 상호명 정규화 (지점명·괄호·법인표기 제거)
+│   └── matcher.py              # 상호명 유사도(rapidfuzz) × 거리 감쇠 → 통합 업소 테이블
+├── signals/                    # ★ 신호 플러그인 — 파일 1개 추가 = 모델 1개 추가
+│   ├── base.py                 # Signal 프로토콜 + AreaContext
+│   ├── registry.py             # @register, available(providers) — 소스 없으면 자동 비활성
+│   └── (모델별 파일들 — 아래 2장)
+├── scorers/
+│   ├── base.py                 # Scorer 프로토콜 — 반환에 근거배지목록 필수 (판단 원칙의 코드화)
+│   ├── registry.py
+│   ├── weighted_sum.py         # 가용 신호 가중합 베이스라인
+│   └── destination_index.py    # 목적지 지수
+├── ui/
+│   ├── state.py  sidebar.py  map_view.py  channels.py
+│   ├── map_interactions.js     # 인라인 JS 격리 (제거 아님 — 검증된 UX 자산)
+│   ├── components/ (badges.py, charts.py, shop_table.py)
+│   └── pages/ (outlook.py, explore.py, changes.py, ranking.py)  # 아웃룩이 첫 페이지
+├── analyzer/ presenter/        # 유지 (schema 상수 사용으로 수정)
+├── tests/                      # pytest + 합성 픽스처 + 골든 테스트
+└── data/ (raw/ cache/)         # gitignore
+```
+
+### 핵심 인터페이스 (계약)
+
+**core/schema.py** — 모든 프로바이더가 반환하는 공통 명부(ROSTER) 컬럼 상수:
+`출처, 출처ID, 상호, 업종대/중/소, 도로명주소, 지번주소, 위도, 경도, 인허가일자, 폐업일자, 영업중, 소재지면적`
+(LOCALDATA `사업장명`→`상호` 변환은 어댑터 책임. 이후 전 계층은 schema 상수만 사용)
+
+**Signal 프로토콜** (업소 단위): `id, label, badge_icon, requires(필요 provider id 집합), compute(ctx) -> DataFrame[업소ID, 값(0~1), 원시값, 배지문구, 상세]`
+→ requires 미충족 시 자동 비활성: 지역별 데이터 가용성 차이(서울 생활인구 vs 지방)를 구조로 흡수.
+
+**AreaIndicator 프로토콜** (구역 단위, M0 아웃룩용): `id, label, requires, compute(ctx) -> IndicatorResult{현재값, 비교값(직전 기간), 시계열 DataFrame, 상대 percentile(시군구 대비), 사실문구}`
+→ Signal과 같은 레지스트리 패턴. 이후 SGIS 인구 추이·지하철 승하차 추이 등 외부 구역 지표도 같은 자리에 추가.
+
+**Scorer 프로토콜**: `score(signal_results, ctx) -> DataFrame[업소ID, 점수, 순위, 근거배지목록]`
+→ 배지 없는 점수 행 금지(계약 테스트로 강제). 부분 데이터 내성 필수.
+
+---
+
+## 2. 분석 모델 포트폴리오 (M0 아웃룩 + 업소 모델 8종)
+
+모든 모델 출력 = percentile 점수 + **관측 사실 배지**만 ("판단하지 않고 신호만" 원칙).
+
+### M0. 구역 아웃룩 (업소 모델들의 앞단)
+
+영업사원의 사고 흐름 "내 구역이 지금 어떤 판인가 → 그 판에서 어디를 갈까"의 첫 질문에 답하는 구역 국면 진단. **단일 점수로 뭉개지 않고**(판단으로 오독 방지) 2축 국면 매트릭스 + 지표 5개로 구성.
+
+- **국면 매트릭스**: 개업 증감 × 폐업 증감 4사분면 (📈확장 / 🔄교체 활발 / 😴정체 / 📉수축). 최근 3~5년 궤적을 연도별 점 이동 경로로 표시 — "정체→확장 전환 중" 같은 흐름이 한눈에 보임.
+- **상대화 원칙**: 절대치는 구역만으로 상승/정체를 말할 수 없음 → 전 지표를 같은 시군구(또는 전국) 대비 percentile로 병기. LOCALDATA가 전국 데이터라 무료로 가능.
+
+| 지표 | 정의 | 읽는 법 |
+|---|---|---|
+| 순증 모멘텀 | 최근 12M (개업−폐업)/활성업소, 직전 12M 대비 + 36M 시계열 | 방향과 가속도 |
+| 공실 회복 속도 ★ | 폐업 주소에 새 인허가가 들어오기까지 중앙값 일수, 최근 vs 과거 | 빈 자리가 빨리 채워짐 = 진입 대기 수요의 직접 증거 |
+| 신규 생존율 추이 | 개업 코호트별 1년 생존율의 연도별 변화 | 상권 체력의 질적 신호 (개업 수만으론 안 보임) |
+| 주류친화 전환율 | 신규 개업 중 주류친화 업태 비중 추이 | 밤형으로 변하는 중인가 (M6의 구역 집계판, 코드 공유) |
+| 업력 구성 | 신생(2년 미만) vs 장수(7년+) 비중 | 젊은/성숙 상권 프로파일 |
+
+전부 LOCALDATA 무료. 구현은 AreaIndicator 플러그인 5개 + `pages/outlook.py`. 아웃룩의 국면 결과는 업소 랭킹의 맥락 배지("확장 국면 구역의 신규 개업")로 재사용.
+
+한계(투명 공개): 인허가일자 기반이라 매출 규모는 안 보임(업소 수의 흐름). 폐업 신고 지연으로 폐업 축이 6개월~1년 늦게 반영될 수 있음 → 지표 캡션에 데이터 기준일(`freshness()`) 항상 표기.
+
+### 업소 단위 모델 8종
+
+| # | 모델 | 한 줄 정의 | 데이터 | 비용 | 난이도 |
+|---|------|-----------|--------|------|--------|
+| M2 | **생존자 지수** | 그 자리·상권의 평균 생존기간 대비 얼마나 오래 버티는가. 자리회전 3회 주소의 4년차 = 입지를 실력으로 이긴 집 | LOCALDATA 단독 (trend.py의 business_age+site_turnover 조인) | 무료 | 하 |
+| M4 | **프랜차이즈 판별** | 전국 CSV에서 정규화 상호 출현 빈도 → 독립 업소만 남긴 실효 타깃 리스트 (프랜차이즈=본사 일괄계약이라 방문 효율 낮음) | LOCALDATA 전국 1회 스캔 | 무료 | 하 |
+| M5 | **주류 인접성 지수** | 반경 300m 단란·유흥·호프 밀도 = "술 마시러 오는 동선" 위인가. 단독 랭킹이 아닌 부스터로 사용 | LOCALDATA 단란·유흥주점 파일 (컬럼 동일, load_licenses 재사용) | 무료 | 하 |
+| M3 | **상권 성장 모멘텀** | 격자 단위 최근 12개월 개업 가속도. 인허가는 소문보다 3~6개월 빠른 선행지표 → 경쟁사보다 먼저 진입 | LOCALDATA + SGIS(분모 정규화) | 무료 | 중 |
+| M6 | **업종 전환 벡터** | 같은 주소의 업태 교체 이력(카페→호프 = 밤형으로 변하는 골목) + 격자 신규개업 업태 구성 변화 | LOCALDATA (주소키 강화 필요) | 무료 | 중 |
+| M8 | **버즈 모멘텀** | 최근 개업 업소 중 블로그 포스팅이 붙기 시작한 집 — 개업 직후 = 주류 공급사 결정 시점이라 타이밍 가치 최대 | Naver 블로그 검색 (일 25,000 무료) | 무료(키) | 하~중 |
+| M1 | **목적지 지수** (핵심) | DI = percentile(리뷰모멘텀 R ÷ 입지기대치 E). R = log(1+리뷰수)/업력 (Naver판: 최근 6개월 블로그 수). E = 동일 (업태×유동십분위) 코호트 중앙값, 지하/2층 토큰 페널티 | Naver판 무료 → Places 완전판 | 단계적 | 중~상 |
+| M7 | **야간 상권 지수** | 밤에 사람이 있고 밤에 여는 정도 — 주간 유동 기준 기존 상권등급과 다른 주류 특화 지도. v1 = 주류친화 업태 비중 + 심야 지하철 승하차 (+서울 생활인구), v2 = +Places 심야영업 비중 | LOCALDATA/SEMAS + 지하철 + 서울API → Places | v1 무료 | 중 |
+
+주요 함정과 대응(구현 시 반영): 배달 전문점(면적 하한 필터), 체험단 블로그 인플레(포스팅 지속성 사용, 2개월차 지속률 배지), 양수도 시 업력 리셋(상호 유사도 승계 추정), 흔한 상호 오카운트(업태 결합+예외 사전), 동명 업소 블로그 오매칭(주소 토큰 필터 필수), 소표본 격자 z-score 폭주(분모 하한 5).
+
+### 데이터 소스 현황 (2026-07-06 검증 결과)
+
+- **LOCALDATA CSV**: 전국, 프로그램 접근 차단 재확인(302→error.html) → 월 1회 수동 다운로드 운영. Provider의 `freshness()`로 낡음을 UI에 노출.
+- **식약처 식품접객업 API** (openapi.foodsafetykorea.go.kr): 전국, REST, `CHNG_DT` 증분 파라미터, 폐업정보(I2819) 스펙 확인됨. 단 원격 샌드박스에서 응답 타임아웃 → **사용자 PC에서 샘플 호출 실검증 필요** (`scripts/verify_mfds_api.py`). 성공 시 수동 CSV의 월중 공백을 증분으로 메움(모델 로직 불변, upsert 레이어만 추가).
+- **Naver**: 지역검색 일 25,000 무료 + 블로그 검색 → 리뷰 모멘텀 무료 프록시.
+- **SGIS**: 격자 인구·사업체 무료 전국 → 입지 기대치 분모.
+- **Google Places**: 유료(결제 등록 예정) → M1 완전판·M7 v2·폐업 교차검증.
+
+---
+
+## 3. 단계별 실행 계획 (하이브리드)
+
+각 단계 종료 시 앱은 항상 동작 상태. 단계 = 커밋 단위.
+
+### Phase 0 — 준비 (사용자 병행)
+- [x] 이 계획서를 `docs/REDESIGN_PLAN.md`로 저장.
+- [ ] 사용자: LOCALDATA에서 **일반음식점 + 단란주점 + 유흥주점** CSV 3개 다운로드 → `data/raw/`.
+- [ ] 사용자: Naver Developers 키, 식약처 Open API 키 발급.
+- [ ] 식약처 API 샘플 호출 검증 (`scripts/verify_mfds_api.py`, 사용자 PC에서 실행).
+
+### Phase 1 — 최소 골격 (1~2일 분량)
+- [ ] `core/schema.py`(컬럼 상수)·`core/config.py`·`core/area.py`(거리/격자 유틸 통합).
+- [ ] `signals/base.py`+`registry.py`(Signal + AreaIndicator 두 프로토콜), `scorers/base.py`.
+- [ ] pytest 도입 + trend.py 5함수·terrain.analyze 합성 픽스처 테스트.
+- [ ] `datasources/localdata_csv.py` + `build_index.py`: 실제 CSV 3개 → 시군구 파티션 parquet.
+- 검증: pytest 그린, `build_index` 후 `fetch(area)` 행수·좌표가 license_fetcher 직접 호출과 일치, 앱 무변경 동작.
+
+### Phase 2 — M0 구역 아웃룩 (가치 첫 전달, 업소 모델보다 선행)
+- [ ] AreaIndicator 5개: `net_momentum.py`(순증), `vacancy_recovery.py`(공실 회복 속도), `cohort_survival.py`(신규 생존율), `liquor_shift.py`(주류친화 전환율), `age_mix.py`(업력 구성) — yearly_trend·site_turnover 로직 이식/일반화.
+- [ ] **"아웃룩" 탭** 추가(기존 app.py에 최소 침습): 국면 매트릭스(연도별 궤적 Altair), 지표 카드 5개(시군구 대비 percentile 병기), 시계열 차트.
+- 검증: 지표값이 trend.py 직접 호출과 일치, 알고 있는 지역 2곳(뜨는 곳/죽는 곳)으로 국면 매트릭스 방향 타당성 육안 확인.
+
+### Phase 2b — 무료 업소 모델 3종 + 우선순위 화면
+- [ ] signals: `survivor.py`(M2), `franchise.py`(M4), `liquor_adjacency.py`(M5) — trend.py 로직 이식.
+- [ ] `scorers/weighted_sum.py` + **"변화"·"방문 우선순위" 탭 추가**. 변화 탭: yearly_trend 차트, 최근 개업(골든타임)·자리회전 리스트. 우선순위 탭: 랭킹 표 + 근거 배지(M0 국면을 맥락 배지로 병기) + 지도 마커.
+- 검증: 배지 수치가 trend.py 직접 호출과 일치, 실지역 1곳 상위 30건 육안 스팟체크.
+
+### Phase 3 — 구조 정리 (랭킹 화면 검증 후)
+- [ ] app.py → `ui/` 분해: state/sidebar/map_view/components/pages, 인라인 JS는 `map_interactions.js`로 격리(string.Template 주입), JS↔파이썬 채널 양끝을 `channels.py`에 집약. streamlit-folium 버전 상한 고정.
+- [ ] `datasources/semas.py`(기존 shop_fetcher 래핑) + `cache.py`, explore 페이지 Provider 경유 전환. `collector/categories.py` 삭제.
+- 검증: 골든 테스트(Provider 경유 == 기존 직접 호출) + Day 8 확정 동작 스모크 체크리스트(원 드래그, 엣지 리사이즈 50m 스냅, 원 밖 클릭 점프, 업종 필터, CSV).
+
+### Phase 4 — 평판 축 (Naver)
+- [ ] `matching/normalize.py`+`matcher.py`(30m 격자 블로킹, rapidfuzz, 보수적 임계 — 오병합보다 미병합), `datasources/naver.py`(캐시 TTL 7일).
+- [ ] signals: `buzz_momentum.py`(M8 — 골든타임 리스트만 조회로 쿼터 방어), `review_momentum.py`+`location_expectation.py`(SGIS) → `scorers/destination_index.py`(M1 Naver판).
+- 검증: 매칭 수작업 라벨 50쌍으로 임계 튜닝, 목적지 지수 상위권 육안 검증. **여기서 M1 가설을 무료로 검증 → Places 결제 투입 여부 최종 판단.**
+
+### Phase 5 — 확장 모델 + 증분 갱신
+- [ ] signals: `growth_momentum.py`(M3), `conversion_vector.py`(M6, 주소키 강화 포함), `night_index.py`(M7 v1).
+- [ ] `datasources/mfds.py`: 식약처 증분(Phase 0 실검증 통과 시) — load 후 upsert.
+- 검증: 각 신호 추가가 기존 파일 수정 없이(등록 외) 이뤄지는지 = 아키텍처 최종 시험.
+
+### Phase 6 — Places 완전판
+- [ ] `datasources/places.py`: M1 완전판(리뷰 수·평점), M7 v2(심야영업), M2 폐업 교차검증("헛걸음 제거").
+- 비용 통제: 무료 신호로 1차 후보 추린 뒤 상위 N건만 조회하는 2패스 + 격자 캐시 30일.
+
+### 의존성 추가 시점
+`pytest`(P1), `pyarrow`(P1), `rapidfuzz`(P4). matplotlib은 requirements에서 제거(미사용 확정).
+
+---
+
+## 4. 위험 요소
+
+1. **매칭 오병합** → 보수적 임계 + 미병합 시 양쪽 독립 유지 + SOURCES 근거 추적.
+2. **LOCALDATA 수동 의존** → freshness() UI 노출 + 식약처 증분 하이브리드로 완화.
+3. **JS 핵 취약성** → 격리 + 버전 고정 + 스모크 체크리스트를 회귀 게이트로.
+4. **Naver/Places 쿼터·비용** → 2패스 조회 + 파일 캐시 TTL.
+5. **판단 원칙 위반 오독** → Scorer 계약에 배지 필수 명시, 계약 테스트로 강제. 컷오프/추천 문구 금지 유지.
+
+## 5. Critical Files
+
+- `app.py` — Phase 2 탭 추가, Phase 3 분해 원본 (세션 키 10개·JS 채널 로직 보존)
+- `timeline/trend.py` — M2/M3/M6/M8 이식 원천 (5함수)
+- `timeline/license_fetcher.py` — LOCALDATA 어댑터 내부 구현, 단란·유흥 파일 추가 로드
+- `collector/shop_fetcher.py` — SEMAS 어댑터 원천, 스키마 기준 컬럼
+- `claude.md` — 각 Phase 종료 시 진행 상황 갱신 (다음 세션 재개용 관례 유지)
+
+## 6. 전체 검증 방법
+
+- 단위: pytest (신호·스코어러 계약 테스트 포함 — 전 신호 공통 스키마, 배지 없는 점수 금지).
+- 동등성: 리팩토링 전후 골든 테스트 (고정 좌표 결과 일치).
+- E2E: `streamlit run app.py` → 강남역 자동 조회 → 아웃룩/변화/우선순위 탭 → 실지역 상위 30건 육안 스팟체크.
+- UI 회귀: Day 8 확정 동작 스모크 체크리스트 (문서화하여 매 Phase 반복).
