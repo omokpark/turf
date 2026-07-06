@@ -145,12 +145,14 @@ turf/
 - [x] 사용자: Naver Developers 키 발급 → `.env`에 NAVER_CLIENT_ID/SECRET 추가, **실호출 검증 완료** (2026-07-06). 블로그 검색: postdate 필드 확인(M8 버즈 모멘텀 시계열에 사용 가능). 지역 검색: 카테고리("술집>맥주,호프")·좌표(mapx/mapy, WGS84×10⁷) 반환 — matcher 보조·업태 보정에 사용 가능. 유의: 지역 검색은 display 최대 5건.
 - 참고: `.env`의 키 이름 `SGIS_API_KEY`는 실제로는 공공데이터포털 공용 인증키 — Phase 1의 `core/config.py`에서 `DATA_GO_KR_API_KEY`로 개명 예정(하위호환 유지).
 
-### Phase 1 — 최소 골격 (1~2일 분량)
-- [ ] `core/schema.py`(컬럼 상수)·`core/config.py`·`core/area.py`(거리/격자 유틸 통합).
-- [ ] `signals/base.py`+`registry.py`(Signal + AreaIndicator 두 프로토콜), `scorers/base.py`.
-- [ ] pytest 도입 + trend.py 5함수·terrain.analyze 합성 픽스처 테스트.
-- [ ] `datasources/moi_api.py` + `build_index.py`: 행안부 인허가 API(3개 업종) 페이징 수집 → 시군구 파티션 parquet. 정규화(컬럼 별칭·EPSG:5174 변환·이상치 제거)는 license_fetcher 로직 이식.
-- 검증: pytest 그린, 담당 지역 1개 자치단체 수집 후 행수·좌표 검증(한반도 범위·연도 분포), 앱 무변경 동작.
+### Phase 1 — 최소 골격 — ✅ 완료 (2026-07-06)
+- [x] `core/schema.py`(ROSTER 컬럼 상수+검증)·`core/config.py`·`core/area.py`(Area+거리/격자 유틸).
+- [x] `signals/base.py`+`registry.py`(Signal + AreaIndicator 프로토콜), `scorers/base.py`(배지 필수 계약 포함).
+- [x] pytest 34개: trend 5함수·terrain·schema·area·registry 계약·moi normalize(실 응답 구조 기반).
+- [x] `datasources/moi_api.py` + `build_index.py`: 페이징 수집(재시도·진행표시), ROSTER 정규화, 자치단체 파티션 parquet, `--update` 증분(DAT_UPDT_PNT) 지원.
+- [x] 검증: pytest 그린 / 강남구 단란주점 1,546행 실수집 — ROSTER 계약 통과, 좌표 96.8% 보유(전부 강남 범위), 인허가 이력 1983~2025 + 폐업 1,374건(→ 시계열 확정), 주소 100% 강남구, 실데이터 yearly_trend 동작 / 앱 무변경(HTTP 200).
+- 부산물: 원본 app.py `_snap_to_grid`의 잠재 결함 발견·수정 — 스냅 전 위도로 경도 스텝을 계산해 남북 수 m 이동에 경도 캐시 키가 흔들리던 것을, 위도 선(先)스냅으로 고정 (Phase 3에서 app.py 치환 시 자동 반영).
+- 주의: 좌표 공백 행을 버리지 않고 유지하기로 정책 변경(구 license_fetcher는 제거) — 신규 인허가 건이 좌표 없이 오므로 골든타임 신호에서 지오코딩 폴백으로 살린다.
 
 ### Phase 2 — M0 구역 아웃룩 (가치 첫 전달, 업소 모델보다 선행)
 - [ ] AreaIndicator 5개: `net_momentum.py`(순증), `vacancy_recovery.py`(공실 회복 속도), `cohort_survival.py`(신규 생존율), `liquor_shift.py`(주류친화 전환율), `age_mix.py`(업력 구성) — yearly_trend·site_turnover 로직 이식/일반화.

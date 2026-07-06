@@ -176,19 +176,15 @@ Day 9 (서비스 피벗 + timeline/ 엔진 착수, 이번 세션에서 진행):
 - timeline/trend.py: filter_radius, yearly_trend(연도별 개업·폐업·순증), recent_openings(최근 N일 개업+경과일), site_turnover(같은 주소 폐업 이력 → 자리회전수), business_age(업력년). 합성 LOCALDATA CSV로 전 함수 검증 완료(좌표 왕복 오차 0).
 - 아직: 실제 인허가 CSV 미확보(수동 다운로드 필요), app.py "변화" 탭 UI 연동 미착수.
 
-▶ 다음 세션 시작점 (Day 9 마무리 시점의 미결 사항):
-1. **인허가 데이터 확보 루트 결정** — 사용자 답변 대기 중:
-   (a) localdata.go.kr 파일 수동 다운로드 (전국 커버, 월 1회 브라우저 다운로드 → data/에 배치)
-   (b) 서울 열린데이터광장 API (서울 한정, 인증키 무료 즉시 발급, 완전 자동화 가능, D단계 생활인구와 같은 키)
-   → 담당 지역이 서울/수도권 중심인지에 따라 결정. localdata.go.kr은 curl 등 프로그램 접근이 타임아웃되므로(2026-07 확인) LOCALDATA OpenAPI 루트는 현재 불가. 이상적 최종형은 하이브리드(최초 적재=파일, 증분 갱신=API).
-2. 데이터 확보 후: license_fetcher 실데이터 검증 → app.py에 "변화" 탭(연도별 개폐업 Altair 차트 + 최근 개업·자리회전 리스트) + 지도 "최근 개업" 레이어 연동.
-3. API 키 준비 목록 (사용자 준비, 해당 단계 착수 직전):
-   - B단계: Google Cloud 프로젝트 + Places API 활성화 + **결제수단 등록 필수** → API 키
-   - D단계(또는 위 1-(b) 선택 시): 서울 열린데이터광장(data.seoul.go.kr) 인증키
+Day 10 (전면 재개정 착수 — 계획 수립 + Phase 0·1 완료, 이번 세션에서 진행):
+- **전면 재개정 계획 수립·승인** → `docs/REDESIGN_PLAN.md` (이후 진행 상황의 단일 출처 — 이 문서의 Phase 체크박스를 갱신하며 진행). 골자: 플러그인 아키텍처(Signal/AreaIndicator/Scorer/Provider 레지스트리), M0 구역 아웃룩(국면 매트릭스+지표 5개) + 업소 모델 8종(M1~M8), 하이브리드 진행(골격 최소 → 무료 모델 직행 → 구조 정리 → Naver → Places).
+- **⚠️ LOCALDATA(localdata.go.kr) 2026-04-16 폐쇄 확인** → 공공데이터포털 통합. Day 9의 "수동 CSV 다운로드" 운영 전제가 무효화되고 **더 좋아짐**: 행안부 인허가 조회서비스 OpenAPI(`apis.data.go.kr/1741000/{general_restaurants|singing_bars|entertainment_bars}/info`)로 완전 자동화. 기존 `.env`의 SGIS_API_KEY(실체는 data.go.kr 공용키)로 3개 업종 즉시 호출 가능 확인. 스펙·실측치는 REDESIGN_PLAN.md "데이터 소스 현황" 참고.
+- Phase 0 완료: 행안부 API 3종 + Naver 검색 API(블로그 postdate·지역 카테고리/좌표) 실호출 검증. `.env`에 NAVER_CLIENT_ID/SECRET 추가됨.
+- Phase 1 완료: `core/`(schema·config·area) + `signals/`·`scorers/` 레지스트리 + `datasources/`(moi_api·build_index) + `tests/` 34개 그린. 강남구 단란주점 1,546행 실수집 검증. app.py는 **무수정** (병존 중 — Phase 3에서 분해).
+- timeline/trend.py 5함수는 ROSTER 스키마와 컬럼 호환이라 그대로 재사용 (tests/test_trend.py가 회귀 감시).
 
-아직 안 한 것:
-- app.py에 "변화(시계열)" 탭 + 지도 "최근 개업/자리회전" 레이어 연동 (timeline 엔진은 완성, 실데이터 확보 후).
-- 로드맵 B(Google Places 평판 + matcher), C(목적지 지수 스코어러), D(유동인구 컨텍스트).
-- GitHub Actions 등 배포/자동화 (5장 "실행 환경" 항목의 "안정화 후" 단계).
+▶ 다음 세션 시작점: `docs/REDESIGN_PLAN.md`의 Phase 체크박스 확인 → **Phase 2 (M0 구역 아웃룩)** — AreaIndicator 5개(net_momentum·vacancy_recovery·cohort_survival·liquor_shift·age_mix) + app.py "아웃룩" 탭. 데이터는 `data/cache/moi/{업종}/3220000.parquet` (강남구, gitignore라 PC마다 `python -m datasources.build_index --district 3220000`로 재수집).
 
-Day 9까지의 변경분은 모두 커밋·푸시 완료 (git log 참고). 새 PC에서는 clone/pull 후 `.env` 채우고 `pip install -r requirements.txt`(pyproj 추가됨)만 하면 이어서 작업 가능.
+아직 안 한 것: REDESIGN_PLAN.md Phase 2~6 전부 (M0 아웃룩 → 무료 모델 3종+우선순위 화면 → app.py 분해 → Naver 평판 축 → 확장 모델·증분 갱신 → Places).
+
+Day 10까지의 변경분은 모두 커밋·푸시 완료. 새 PC에서는 clone/pull 후 `.env` 채우고(NAVER 키 2개 추가됨) `pip install -r requirements.txt`(pyarrow·pytest 추가, matplotlib 제거) 하면 이어서 작업 가능.
