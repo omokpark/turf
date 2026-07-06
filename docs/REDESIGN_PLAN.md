@@ -28,10 +28,11 @@ turf/
 │   ├── registry.py
 │   ├── cache.py                # parquet 파일 캐시 (격자키+TTL)
 │   ├── semas.py                # 기존 collector/shop_fetcher 래핑
-│   ├── localdata_csv.py        # 기존 timeline/license_fetcher 래핑 + 시군구 파티션
-│   ├── build_index.py          # CLI: 수동 CSV → 파티션 parquet 1회 변환
-│   ├── mfds.py                 # 식약처 API 증분 갱신 (실검증 후)
+│   ├── moi_api.py              # ★ 행안부 인허가 조회서비스 API (구 LOCALDATA 대체, 완전 자동)
+│   │                           #   정규화 로직은 timeline/license_fetcher에서 이식 (EPSG:5174 변환 등)
+│   ├── build_index.py          # CLI: API 페이징 수집 → 시군구 파티션 parquet (초기 적재·주기 갱신)
 │   └── naver.py                # Naver 지역/블로그 검색
+│   # (mfds.py 식약처 증분은 행안부 API 일간 갱신 확인으로 보류 — 폴백 후보로만)
 ├── matching/
 │   ├── normalize.py            # 상호명 정규화 (지점명·괄호·법인표기 제거)
 │   └── matcher.py              # 상호명 유사도(rapidfuzz) × 거리 감쇠 → 통합 업소 테이블
@@ -109,10 +110,17 @@ turf/
 
 주요 함정과 대응(구현 시 반영): 배달 전문점(면적 하한 필터), 체험단 블로그 인플레(포스팅 지속성 사용, 2개월차 지속률 배지), 양수도 시 업력 리셋(상호 유사도 승계 추정), 흔한 상호 오카운트(업태 결합+예외 사전), 동명 업소 블로그 오매칭(주소 토큰 필터 필수), 소표본 격자 z-score 폭주(분모 하한 5).
 
-### 데이터 소스 현황 (2026-07-06 검증 결과)
+### 데이터 소스 현황 (2026-07-06 재검증 — ⚠️ LOCALDATA 폐쇄 반영)
 
-- **LOCALDATA CSV**: 전국, 프로그램 접근 차단 재확인(302→error.html) → 월 1회 수동 다운로드 운영. Provider의 `freshness()`로 낡음을 UI에 노출.
-- **식약처 식품접객업 API** (openapi.foodsafetykorea.go.kr): 전국, REST, `CHNG_DT` 증분 파라미터, 폐업정보(I2819) 스펙 확인됨. 단 원격 샌드박스에서 응답 타임아웃 → **사용자 PC에서 샘플 호출 실검증 필요** (`scripts/verify_mfds_api.py`). 성공 시 수동 CSV의 월중 공백을 증분으로 메움(모델 로직 불변, upsert 레이어만 추가).
+- **~~LOCALDATA CSV~~ → 행안부 인허가 조회서비스 OpenAPI (data.go.kr)**: localdata.go.kr은 **2026-04-16 폐쇄**, 공공데이터포털로 일원화됨. 인허가 195종이 전부 OpenAPI로 재개방 — 수동 CSV 다운로드 운영 자체가 불필요해짐(완전 자동화 가능).
+  - 일반음식점 조회서비스: [data ID 15154916](https://www.data.go.kr/data/15154916/openapi.do)
+  - 단란주점영업 조회서비스: data ID 15154883
+  - 유흥주점영업 조회서비스: data ID 15154890
+  - (필요 시 휴게음식점 15154921, 제과점영업 15155252 등 동일 계열)
+  - 공통 스펙: REST, JSON+XML, **일간 갱신**, 무료, 활용신청 자동승인, 트래픽 개발계정 10,000/일. 좌표는 여전히 EPSG:5174(→ 기존 pyproj 변환 로직 재사용). 참고문서 "개방자치단체코드_영업상태코드.xlsx" 존재 → 자치단체코드 단위 조회 가능성 높음(구 LOCALDATA API 파라미터 체계 계승 추정).
+  - 미확정: 정확한 엔드포인트·요청 파라미터는 페이지의 Swagger에만 있음 → **활용신청 후 첫 호출로 확정** (Phase 1 착수 시).
+  - 유의: 구 파일 루트(file.localdata.go.kr)는 사망, data.go.kr의 구 파일데이터 페이지(15045016 등)도 그 죽은 링크를 가리키는 stale 상태(2025-11-27 수정). 대량 초기 적재도 API 페이징으로 수행 — 전국 일반음식점 약 213만 행이므로 M4(전국 스캔)는 페이지 크기·트래픽 한도 확인 후 설계.
+- **식약처 식품접객업 API**: 위 행안부 API가 일간 갱신이므로 **증분 보완 채널로서의 필요성 소멸** — 보류. `scripts/verify_mfds_api.py`는 예비 폴백으로만 유지.
 - **Naver**: 지역검색 일 25,000 무료 + 블로그 검색 → 리뷰 모멘텀 무료 프록시.
 - **SGIS**: 격자 인구·사업체 무료 전국 → 입지 기대치 분모.
 - **Google Places**: 유료(결제 등록 예정) → M1 완전판·M7 v2·폐업 교차검증.
@@ -123,18 +131,19 @@ turf/
 
 각 단계 종료 시 앱은 항상 동작 상태. 단계 = 커밋 단위.
 
-### Phase 0 — 준비 (사용자 병행)
+### Phase 0 — 준비 (사용자 병행) — ⚠️ LOCALDATA 폐쇄로 개정 (2026-07-06)
 - [x] 이 계획서를 `docs/REDESIGN_PLAN.md`로 저장.
-- [ ] 사용자: LOCALDATA에서 **일반음식점 + 단란주점 + 유흥주점** CSV 3개 다운로드 → `data/raw/`.
-- [ ] 사용자: Naver Developers 키, 식약처 Open API 키 발급.
-- [ ] 식약처 API 샘플 호출 검증 (`scripts/verify_mfds_api.py`, 사용자 PC에서 실행).
+- [x] ~~LOCALDATA CSV 3개 수동 다운로드~~ → 폐쇄 확인. 대체: 아래 API 활용신청.
+- [ ] 사용자: data.go.kr 로그인 → **일반음식점(15154916)·단란주점(15154883)·유흥주점(15154890) 조회서비스 3건 활용신청** (자동승인, 기존 계정의 인증키 사용).
+- [ ] 사용자: Naver Developers 키 발급 (Phase 4 전까지).
+- [ ] Claude: 활용신청 승인 후 첫 호출로 엔드포인트·파라미터 확정 → `datasources/moi_api.py` 설계 반영.
 
 ### Phase 1 — 최소 골격 (1~2일 분량)
 - [ ] `core/schema.py`(컬럼 상수)·`core/config.py`·`core/area.py`(거리/격자 유틸 통합).
 - [ ] `signals/base.py`+`registry.py`(Signal + AreaIndicator 두 프로토콜), `scorers/base.py`.
 - [ ] pytest 도입 + trend.py 5함수·terrain.analyze 합성 픽스처 테스트.
-- [ ] `datasources/localdata_csv.py` + `build_index.py`: 실제 CSV 3개 → 시군구 파티션 parquet.
-- 검증: pytest 그린, `build_index` 후 `fetch(area)` 행수·좌표가 license_fetcher 직접 호출과 일치, 앱 무변경 동작.
+- [ ] `datasources/moi_api.py` + `build_index.py`: 행안부 인허가 API(3개 업종) 페이징 수집 → 시군구 파티션 parquet. 정규화(컬럼 별칭·EPSG:5174 변환·이상치 제거)는 license_fetcher 로직 이식.
+- 검증: pytest 그린, 담당 지역 1개 자치단체 수집 후 행수·좌표 검증(한반도 범위·연도 분포), 앱 무변경 동작.
 
 ### Phase 2 — M0 구역 아웃룩 (가치 첫 전달, 업소 모델보다 선행)
 - [ ] AreaIndicator 5개: `net_momentum.py`(순증), `vacancy_recovery.py`(공실 회복 속도), `cohort_survival.py`(신규 생존율), `liquor_shift.py`(주류친화 전환율), `age_mix.py`(업력 구성) — yearly_trend·site_turnover 로직 이식/일반화.
@@ -173,7 +182,7 @@ turf/
 ## 4. 위험 요소
 
 1. **매칭 오병합** → 보수적 임계 + 미병합 시 양쪽 독립 유지 + SOURCES 근거 추적.
-2. **LOCALDATA 수동 의존** → freshness() UI 노출 + 식약처 증분 하이브리드로 완화.
+2. ~~LOCALDATA 수동 의존~~ → **해소** (행안부 API 일간 갱신·완전 자동화). 잔여 위험: 신규 API의 페이지 크기·전국 스캔(M4) 트래픽 한도(개발계정 10,000/일) — 활용신청 후 실측으로 확정, 부족 시 운영계정 트래픽 증가 신청.
 3. **JS 핵 취약성** → 격리 + 버전 고정 + 스모크 체크리스트를 회귀 게이트로.
 4. **Naver/Places 쿼터·비용** → 2패스 조회 + 파일 캐시 TTL.
 5. **판단 원칙 위반 오독** → Scorer 계약에 배지 필수 명시, 계약 테스트로 강제. 컷오프/추천 문구 금지 유지.
