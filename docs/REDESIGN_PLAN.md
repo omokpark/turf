@@ -200,9 +200,16 @@ turf/
 - [x] 실데이터 스팟체크 리스트 생성 (강남역 400m): M3 배지 185곳(테헤란로 2·4·6길 개업 12곳/직전 6곳, 상위 14%), M6 배지 7곳(경양식→호프 등 전부 주류친화 상승 방향) — 사용자 육안 확인 잔여.
 - 검증: pytest 85개 그린 (전국 스캔 집계·체크포인트 재개, franchise 전국/폴백 이중 경로, night_index 변별·서울 밖 강등).
 
-### Phase 6 — Places 완전판
-- [ ] `datasources/places.py`: M1 완전판(리뷰 수·평점), M7 v2(심야영업), M2 폐업 교차검증("헛걸음 제거").
-- 비용 통제: 무료 신호로 1차 후보 추린 뒤 상위 N건만 조회하는 2패스 + 격자 캐시 30일.
+### Phase 6 — Places 완전판 (착수 2026-07-07 — 어댑터·쿼터 완성, 키 수령 대기)
+- [x] **요금 실측** (2026-07-07, 2025-03 개편 후 SKU별 월 무료 체계): Text Search IDs Only = 무제한 무료 / Place Details Pro(businessStatus 등) = 5,000건, $17/1k / Place Details **Enterprise**(rating·userRatingCount·regularOpeningHours) = **1,000건**, $20/1k. 평점·리뷰수도 영업시간과 같은 Enterprise 필드 — 영업시간을 빼도 등급 안 내려감.
+- [x] `datasources/places_quota.py`: 월별 원장(파일 유지) — **무료 한도의 90%에서 하드 스톱**(QuotaExceeded, HTTP 발생 자체를 차단 — 테스트로 검증), 월 자동 리셋. 사용자 요구(2026-07-07): 무료 한도 초과 호출 금지.
+- [x] `datasources/places.py` 어댑터: 모든 호출 원장 경유 강제 + 30일 캐시(히트는 쿼터 소비 0). **등급 분리 설계(사용자 결정)**: find_place_id(무료) → business_status(Pro, M2 폐업 교차검증을 방문 리스트 전체에 넓게) → place_snapshot(Enterprise, 최상위 후보에만 평점·영업시간). ⚠️ 실호출 스모크는 GOOGLE_PLACES_API_KEY 수령 후.
+- [x] 키 수령·실호출 스모크 (2026-07-07): 지안식당 → place_id → 구글 평점 5.0/리뷰 82 — **목적지 지수 상위 업소가 독립 소스에서도 검증됨** (M1 가설 교차 확인).
+- [x] 랭킹 탭 2패스 연동 (`ui/pages/ranking.py::_google_verification`): 상위 10곳 평판 스냅샷(Enterprise — ⭐평점·리뷰수 + 🌃심야영업 + 폐업), 11~30위 폐업 검증만(Pro), place_id 검색은 무료. QuotaExceeded는 등급별로 우아하게 생략(안내 캡션). 파서·배지 헬퍼는 places.py (`is_late_night` — 자정 롤오버·24시간 영업 처리, `snapshot_badges`, `status_badge`).
+- [x] 강남역 실측 (첫 조회 24s, 이후 30일 캐시): 상위 10곳 전부 구글 평점 배지 획득. **3위 스시오사카 = 인허가 영업중인데 구글 기준 폐업 — M2 헛걸음 제거의 첫 실전 적중.** 다운타우너(4.9/403)는 심야 영업 배지. 쿼터 소비: 무료 31 / Pro 20 / Enterprise 10. pytest 99개 그린.
+- [ ] 권장: Google Cloud 콘솔 Quotas에서 키 자체에도 일일 상한 설정 (원장과 이중 방어).
+- [ ] M1 완전판(구글 리뷰수·평점을 목적지 지수 점수에 결합)은 보류 — Enterprise 쿼터(월 900)로는 상위 후보 배지까지가 적정, 점수 결합은 전 업소 조회가 필요해 유료 확장 결정 후.
+- 비용 통제: 무료 신호로 1차 후보 추린 뒤 상위 N건만 조회하는 2패스 + 캐시 30일 + 쿼터 원장.
 
 ### 의존성 추가 시점
 `pytest`(P1), `pyarrow`(P1), `rapidfuzz`(P4). matplotlib은 requirements에서 제거(미사용 확정).

@@ -211,8 +211,15 @@ Day 12 (Phase 5 마무리 — M7 야간 지수 + M4 전국 스캔, 이번 세션
 - `.env`에 SEOUL_OPEN_DATA_KEY 추가됨(이 PC). moi_api에 fetch_page(단일 페이지) 분리.
 - 검증: pytest 85개 그린. 강남역 실측 — 야간 지수 453행/배지 92곳(역삼1동 심야 56%), M3 배지 185곳·M6 배지 7곳 스팟체크 리스트 생성(육안 확인 잔여).
 
-▶ 다음 세션 시작점: ① 전국 스캔 완료 확인(`data/cache/moi/national_name_counts.meta.json` 존재 여부, 미완이면 `python -m datasources.national_names` 재실행) → franchise 전국 모드 실검증(써브웨이가 '전국 N곳' 배지 받는지) ② 육안 검증 3건(M1 목적지 지수 상위권 → **Places 결제 투입 판단**, M3/M6 배지 스팟체크, 아웃룩 국면 방향) ③ **Phase 6 (Places 완전판)** 또는 지하철 심야 승하차(M7 v1.1).
+Day 12 후반 (Phase 6 — Places 완전판, 같은 세션에서 진행):
+- **요금 실측** (2025-03 개편 후): Text Search IDs Only 무제한 무료 / Details Pro(businessStatus) 월 5,000 / Details **Enterprise(평점·리뷰수·영업시간) 월 1,000**. 평점·리뷰수도 영업시간과 같은 Enterprise — 필드를 빼도 등급 안 내려감.
+- `datasources/places_quota.py`: 월별 원장 — **무료 한도의 90%에서 하드 스톱**(QuotaExceeded, HTTP 발생 자체 차단), 월 자동 리셋. 사용자 요구: 무료 한도 초과 호출 금지.
+- `datasources/places.py`: 원장 경유 강제 + 30일 캐시(히트는 쿼터 0). **등급 분리(사용자 결정)**: find_place_id(무료) / business_status(Pro — 폐업검증 넓게) / place_snapshot(Enterprise — 최상위만). 파서: is_late_night(자정 롤오버·24h), snapshot_badges, status_badge.
+- 랭킹 탭 2패스: 상위 10 평판 스냅샷 + 11~30 폐업 검증, QuotaExceeded는 등급별 우아한 생략. `.env`에 GOOGLE_PLACES_API_KEY 추가됨(Google Cloud Console에서 발급 — AI Studio 아님 주의).
+- **강남역 실측**: 상위 10곳 전부 구글 평점 배지. **3위 스시오사카 = 인허가 영업중 + 구글 폐업 → M2 헛걸음 제거 첫 실전 적중.** 지안식당 구글 5.0/82(M1 교차 확인), 다운타우너 심야영업 배지. 쿼터 무료31/Pro20/Ent10. pytest 99개 그린.
 
-아직 안 한 것: Phase 6 (Places). M7 v1.1(지하철 축). 매칭 임계 튜닝(matcher 실사용 시점에).
+▶ 다음 세션 시작점: ① 전국 스캔 완료 확인(`national_name_counts.meta.json`, 미완이면 `python -m datasources.national_names` 재실행 — 체크포인트에서 이어짐) → franchise 전국 모드 실검증(써브웨이 '전국 N곳' 배지) ② 육안 검증(목적지 지수 상위권·M3/M6 배지·아웃룩 국면 — 구글 교차검증 배지가 붙어 판단 근거 강화됨) ③ 잔여 소과제: M7 v1.1(지하철 심야 승하차), Google Cloud 콘솔 키 일일 상한 설정, 매칭 임계 튜닝.
 
-Day 12까지의 변경분은 모두 커밋·푸시 완료(전국 스캔 결과 parquet은 data/라 gitignore — PC마다 스캔 필요). 새 PC에서는 clone/pull 후 `.env` 채우고(키 5개: data.go.kr·VWorld·NAVER 2개·SEOUL) `pip install -r requirements.txt` 하면 이어서 작업 가능.
+아직 안 한 것: M1 완전판의 점수 결합(Enterprise 쿼터상 전 업소 조회 불가 — 유료 확장 결정 후), M7 v1.1.
+
+Day 12까지의 변경분은 모두 커밋·푸시 완료(스캔·캐시 데이터는 data/라 gitignore). 새 PC에서는 clone/pull 후 `.env` 채우고(키 6개: data.go.kr·VWorld·NAVER 2·SEOUL·PLACES) `pip install -r requirements.txt` 하면 이어서 작업 가능.

@@ -49,3 +49,11 @@ def seoul_key() -> str:
     if not key:
         raise RuntimeError(".env에 SEOUL_OPEN_DATA_KEY가 설정되어 있지 않습니다.")
     return key
+
+
+def places_key() -> str:
+    """Google Places API (New) 키 — 유일한 유료 API. 호출은 반드시 places_quota 원장 경유."""
+    key = os.getenv("GOOGLE_PLACES_API_KEY")
+    if not key:
+        raise RuntimeError(".env에 GOOGLE_PLACES_API_KEY가 설정되어 있지 않습니다.")
+    return key

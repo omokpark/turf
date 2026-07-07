@@ -12,7 +12,8 @@ from streamlit_folium import st_folium
 
 from core import schema
 from core.area import Area, OUTLOOK_RADIUS_M, filter_radius
-from datasources import moi_store, naver, seoul
+from datasources import moi_store, naver, places, seoul
+from datasources.places_quota import QuotaExceeded
 from scorers.base import available_scorers, validate_score_result
 from signals.base import AreaContext
 from signals.outlook import phase_trajectory
@@ -32,7 +33,51 @@ import scorers.destination_index  # noqa: F401
 import scorers.weighted_sum  # noqa: F401
 
 TOP_N = 30
+SNAPSHOT_TOP_N = 10  # Enterprise 쿼터(월 900캡)는 최상위에만 — 나머지는 Pro 폐업검증만
 MARKER_COLOR = "#c0392b"
+
+
+def _google_verification(top: pd.DataFrame) -> tuple[dict, list[str]]:
+    """상위 후보를 구글 Places로 교차검증 — 2패스 비용 설계의 실행부.
+
+    상위 SNAPSHOT_TOP_N곳: 평판 스냅샷(Enterprise — 평점·리뷰수·심야영업·폐업).
+    나머지 TOP_N까지: 폐업 검증만(Pro — 헛걸음 제거). place_id 검색은 무제한 무료.
+    쿼터 한도 도달 시 해당 등급만 생략하고 계속한다 (30일 캐시 히트는 쿼터 소비 0).
+    반환: (업소ID → 배지 리스트, 사용자 안내 문구 리스트)
+    """
+    extra: dict = {}
+    notes: list[str] = []
+    enterprise_blocked = False
+    pro_blocked = False
+    for i, (_, row) in enumerate(top.iterrows()):
+        if pd.isna(row[schema.LAT]) or pd.isna(row[schema.LON]):
+            continue
+        token = naver.address_token(row[schema.ADDR_ROAD], row[schema.ADDR_JIBUN])
+        try:
+            pid = places.find_place_id(row[schema.NAME], token, row[schema.LAT], row[schema.LON])
+        except Exception:
+            continue  # ID 검색 실패는 배지 없이 넘어간다
+        if not pid:
+            continue
+        badges: list[str] = []
+        if i < SNAPSHOT_TOP_N and not enterprise_blocked:
+            try:
+                badges = places.snapshot_badges(places.place_snapshot(pid))
+            except QuotaExceeded as e:
+                enterprise_blocked = True
+                notes.append(str(e))
+        if not badges and not pro_blocked:  # 스냅샷을 못 받았으면 폐업 검증이라도
+            try:
+                b = places.status_badge(places.business_status(pid))
+                badges = [b] if b else []
+            except QuotaExceeded as e:
+                pro_blocked = True
+                notes.append(str(e))
+        if badges:
+            extra[row["업소ID"]] = badges
+        if enterprise_blocked and pro_blocked:
+            break
+    return extra, notes
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -97,11 +142,22 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
     st.caption(f"{scorer.label} — {scorer.description}")
 
     top = scored.head(TOP_N).merge(
-        local[[schema.SRC_ID, schema.NAME, schema.CAT_S, schema.ADDR_ROAD, schema.LAT, schema.LON]],
+        local[[schema.SRC_ID, schema.NAME, schema.CAT_S, schema.ADDR_ROAD, schema.ADDR_JIBUN, schema.LAT, schema.LON]],
         left_on="업소ID",
         right_on=schema.SRC_ID,
         how="left",
     )
+
+    # Places 키가 있으면 상위 후보를 구글로 교차검증 (2패스 — 첫 조회만 느리고 30일 캐시)
+    if places.available():
+        with st.spinner("구글 Places 교차검증 중... (첫 조회만 느리고 30일간 캐시됩니다)"):
+            google_badges, quota_notes = _google_verification(top)
+        top["근거배지목록"] = top.apply(
+            lambda r: list(r["근거배지목록"]) + google_badges.get(r["업소ID"], []), axis=1
+        )
+        for note in quota_notes:
+            st.caption(f"ℹ️ {note}")
+
     top["근거"] = top["근거배지목록"].map(lambda badges: " · ".join(badges))
     display = top[["순위", schema.NAME, schema.CAT_S, schema.ADDR_ROAD, "점수", "근거"]].rename(
         columns={schema.NAME: "상호", schema.CAT_S: "업태", schema.ADDR_ROAD: "주소"}
