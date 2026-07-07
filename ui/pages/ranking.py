@@ -20,7 +20,9 @@ from signals.registry import available_signals
 
 # 신호·스코어러 모듈 import = 레지스트리 등록 (파일 1개 추가 = 랭킹에 자동 반영)
 import signals.buzz_momentum  # noqa: F401
+import signals.conversion_vector  # noqa: F401
 import signals.franchise  # noqa: F401
+import signals.growth_momentum  # noqa: F401
 import signals.liquor_adjacency  # noqa: F401
 import signals.recent_opening  # noqa: F401
 import signals.review_momentum  # noqa: F401

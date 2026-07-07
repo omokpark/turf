@@ -68,15 +68,39 @@ def update(district_code: str, category: str) -> pd.DataFrame:
     return merged
 
 
+def cached_partitions() -> list[tuple[str, str]]:
+    """보유 중인 (업종, 자치단체코드) 파티션 목록."""
+    moi_dir = config.CACHE_DIR / "moi"
+    if not moi_dir.exists():
+        return []
+    return sorted((f.parent.name, f.stem) for f in moi_dir.glob("*/*.parquet"))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="행안부 인허가 데이터 파티션 빌드")
-    parser.add_argument("--district", required=True, help="개방자치단체코드 (예: 강남구 3220000)")
+    parser.add_argument("--district", help="개방자치단체코드 (예: 강남구 3220000)")
     parser.add_argument("--category", choices=list(moi_api.SERVICES), help="생략 시 3개 업종 전부")
     parser.add_argument("--update", action="store_true", help="기존 파티션 증분 갱신")
+    parser.add_argument("--update-all", action="store_true", help="보유 중인 전 파티션 증분 갱신 (주기 운영용)")
     args = parser.parse_args()
 
-    categories = [args.category] if args.category else list(moi_api.SERVICES)
     started = datetime.now()
+    if args.update_all:
+        partitions = cached_partitions()
+        if not partitions:
+            print("보유 파티션이 없습니다 — 먼저 --district 로 수집하세요.")
+            return 1
+        for category, district in partitions:
+            print(f"갱신 시작: {district} / {category}")
+            df = update(district, category)
+            alive = int(df[schema.IS_OPEN].sum())
+            print(f"  요약: 전체 {len(df):,}행, 영업중 {alive:,}, 폐업 등 {len(df) - alive:,}")
+        print(f"완료 ({datetime.now() - started})")
+        return 0
+
+    if not args.district:
+        parser.error("--district 가 필요합니다 (--update-all 사용 시 생략 가능)")
+    categories = [args.category] if args.category else list(moi_api.SERVICES)
     for category in categories:
         print(f"{'갱신' if args.update else '수집'} 시작: {args.district} / {category}")
         df = update(args.district, category) if args.update else build(args.district, category)

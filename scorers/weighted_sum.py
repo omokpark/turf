@@ -18,7 +18,16 @@ from signals import base as signal_base
 # - liquor_adjacency 0.5: 단독 의미가 약한 부스터.
 # - franchise 0.0: 점수 미반영, 체인 추정 배지만 정보로 표시 (요즘은 대부분 프랜차이즈라
 #   제외가 과하다는 사용자 피드백 2026-07-06).
-DEFAULT_WEIGHTS = {"liquor_adjacency": 0.5, "recent_opening": 1.5, "survivor": 0.5, "franchise": 0.0}
+# - growth_momentum 0.5 / conversion_vector 0.5 (Phase 5): 골목·자리의 맥락 부스터 —
+#   업소 자체의 신호(개업 타이밍·생존)보다 낮게.
+DEFAULT_WEIGHTS = {
+    "liquor_adjacency": 0.5,
+    "recent_opening": 1.5,
+    "survivor": 0.5,
+    "franchise": 0.0,
+    "growth_momentum": 0.5,
+    "conversion_vector": 0.5,
+}
 FALLBACK_WEIGHT = 1.0
 
 

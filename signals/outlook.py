@@ -39,11 +39,42 @@ def is_liquor_friendly(cat_s: pd.Series, name: pd.Series) -> pd.Series:
     return by_cat | by_name
 
 
-# ── 주소 키 (trend.site_turnover와 동일 규칙 — 도로명 우선, 공백 정리) ─────────
+# ── 주류친화도 점수 (M6 업종 전환 벡터용, 0~3) ──────────────────────────────────
+# 3=주류가 본업(유흥·단란), 2=주류 중심 일반음식(호프·주점류), 1=식사+반주 가능, 0=주류 무관
+AFFINITY_3 = {"유흥주점", "단란주점"}
+AFFINITY_2 = {"호프/통닭", "정종/대포집/소주방", "감성주점", "간이주점", "라이브카페"}
+AFFINITY_0 = {"카페", "까페", "커피숍", "다방", "전통찻집", "키즈카페", "분식", "김밥(도시락)", "제과점영업", "패스트푸드", "아이스크림"}
+
+
+def liquor_affinity(cat_s: str, name: str) -> int:
+    """업태·상호로 추정한 주류친화도 0~3. 모호하면 1(식사+반주 가능한 일반음식) 취급."""
+    cat = (cat_s or "").strip()
+    if cat in AFFINITY_3:
+        return 3
+    if cat in AFFINITY_2:
+        return 2
+    lowered = (name or "").lower()
+    if any(kw.lower() in lowered for kw in LIQUOR_NAME_KEYWORDS):
+        return 2
+    if cat in AFFINITY_0:
+        return 0
+    return 1
+
+
+# ── 주소 키 (자리 식별용 — 도로명 우선, 공백·주석 정리) ────────────────────────
 def address_key(df: pd.DataFrame) -> pd.Series:
+    """자리(호실 수준) 식별 키.
+
+    Phase 5 강화: 말미의 법정동 주석 괄호("... 강남대로 390, 2층 (역삼동)")와 쉼표 주변
+    공백 표기 차이를 제거한다 — 같은 자리가 등록 시기에 따라 주석 유무만 다른 경우를
+    같은 키로 묶는다. 건물 전체를 하나로 뭉개지는 않는다(층·호 정보는 유지) — 한 건물에
+    여러 업소가 정상 공존하므로 건물 단위 병합은 자리회전을 과대 계산한다.
+    """
     road = df[schema.ADDR_ROAD].fillna("").astype(str)
     jibun = df[schema.ADDR_JIBUN].fillna("").astype(str)
     key = road.where(road.str.len() > 0, jibun)
+    key = key.str.replace(r"\s*\([^()]*\)\s*$", "", regex=True)  # 말미 (법정동) 주석 제거
+    key = key.str.replace(r"\s*,\s*", ",", regex=True)  # 쉼표 주변 공백 통일
     return key.str.replace(r"\s+", " ", regex=True).str.strip()
 
 
@@ -107,6 +138,18 @@ MIN_CELL_ROWS = 30
 MIN_CELLS = 8
 
 
+def grid_cell_ids(df: pd.DataFrame, grid_m: int = GRID_M) -> pd.Series:
+    """행별 격자 셀 ID ("위도인덱스_경도인덱스"). 좌표 결측 행은 호출 전에 걸러야 한다."""
+    lat_step = grid_m / 111_320
+    mid_lat = df[schema.LAT].median()
+    lon_step = grid_m / (111_320 * math.cos(math.radians(mid_lat)))
+    return (
+        (df[schema.LAT] / lat_step).round().astype(int).astype(str)
+        + "_"
+        + (df[schema.LON] / lon_step).round().astype(int).astype(str)
+    )
+
+
 def grid_percentile(
     reference: pd.DataFrame,
     value_fn,
@@ -123,14 +166,7 @@ def grid_percentile(
     coords = reference.dropna(subset=[schema.LAT, schema.LON])
     if len(coords) == 0 or focal_value is None:
         return None
-    lat_step = grid_m / 111_320
-    mid_lat = coords[schema.LAT].median()
-    lon_step = grid_m / (111_320 * math.cos(math.radians(mid_lat)))
-    cell = (
-        (coords[schema.LAT] / lat_step).round().astype(int).astype(str)
-        + "_"
-        + (coords[schema.LON] / lon_step).round().astype(int).astype(str)
-    )
+    cell = grid_cell_ids(coords, grid_m)
     values = []
     for _, cell_df in coords.groupby(cell):
         if len(cell_df) < min_cell_rows:
