@@ -14,12 +14,13 @@ from streamlit_folium import st_folium
 
 from core import schema
 from core.area import Area, OUTLOOK_RADIUS_M, filter_radius
-from datasources import moi_store, naver, places, seoul
+from datasources import moi_store, naver, places, places_quota, seoul
 from datasources.places_quota import QuotaExceeded
 from scorers.base import available_scorers, validate_score_result
 from signals.base import AreaContext
 from signals.outlook import phase_trajectory
 from signals.registry import available_signals
+from ui.components.badges import quota_signal, render_badges
 
 # 신호·스코어러 모듈 import = 레지스트리 등록 (파일 1개 추가 = 랭킹에 자동 반영)
 import signals.buzz_momentum  # noqa: F401
@@ -37,6 +38,7 @@ import scorers.weighted_sum  # noqa: F401
 TOP_N = 30
 SNAPSHOT_TOP_N = 10  # Enterprise 쿼터(월 900캡)는 최상위에만 — 나머지는 Pro 폐업검증만
 MARKER_COLOR = "#c0392b"
+RANK_MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 
 
 def _google_verification(top: pd.DataFrame) -> tuple[dict, list[str]]:
@@ -152,6 +154,9 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
 
     # Places 키가 있으면 상위 후보를 구글로 교차검증 (2패스 — 첫 조회만 느리고 30일 캐시)
     if places.available():
+        quota_line = quota_signal(places_quota.summary())
+        if quota_line:
+            st.caption(f"Google Places 월 쿼터 — {quota_line}")
         with st.spinner("구글 Places 교차검증 중... (첫 조회만 느리고 30일간 캐시됩니다)"):
             google_badges, quota_notes = _google_verification(top)
         top["근거배지목록"] = top.apply(
@@ -161,14 +166,25 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
             st.caption(f"ℹ️ {note}")
 
     top["근거"] = top["근거배지목록"].map(lambda badges: " · ".join(badges))
-    display = top[["순위", schema.NAME, schema.CAT_S, schema.ADDR_ROAD, "점수", "근거"]].rename(
-        columns={schema.NAME: "상호", schema.CAT_S: "업태", schema.ADDR_ROAD: "주소"}
-    )
-    st.dataframe(display, width="stretch", hide_index=True)
-    st.caption(f"상위 {len(top)}곳 표시 (근거 있는 전체 {len(scored)}곳 중)")
+
+    st.markdown(f"##### 📋 상위 {len(top)}곳 (근거 있는 전체 {len(scored)}곳 중)")
+    for _, row in top.iterrows():
+        rank = int(row["순위"])
+        medal = RANK_MEDALS.get(rank, f"{rank}위")
+        with st.container(border=True):
+            head_col, score_col = st.columns([4, 1])
+            with head_col:
+                # unsafe_allow_html을 안 쓰므로 st.markdown이 상호명 안의 HTML 특수문자를
+                # 자동으로 이스케이프한다 (외부 데이터라 반드시 이 경로를 유지할 것).
+                st.markdown(f"{medal} **{row[schema.NAME]}** · {row[schema.CAT_S]}")
+                st.caption(row[schema.ADDR_ROAD] or "주소 정보 없음")
+            with score_col:
+                score = min(1.0, max(0.0, float(row["점수"])))
+                st.progress(score, text=f"{score:.2f}")
+            render_badges(row["근거배지목록"])
 
     st.divider()
-    st.markdown("#### 지도")
+    st.markdown("#### 🗺️ 지도")
     m = folium.Map(location=[cy, cx], zoom_start=16)
     for _, row in top.dropna(subset=[schema.LAT, schema.LON]).iterrows():
         # 상호명·근거 배지는 외부 데이터(인허가 등록 상호, Naver 블로그 텍스트 등)라

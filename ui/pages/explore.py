@@ -28,10 +28,10 @@ def render_map_tab(radius: int, analysis: dict, selected_categories: list[str], 
     map_data = render_map(radius, analysis, selected_categories, category_colors)
 
     st.caption(
-        f"중심: 위도 {st.session_state.cy:.5f}, 경도 {st.session_state.cx:.5f} · "
-        f"반경 {radius}m (도보 약 {walk_minutes(radius)}분) — "
-        "원 끌기 = 중심 이동 · 원 가장자리 끌기 = 반경 조절 · 원 밖 클릭 = 점프 · 지도 끌기/줌 = 탐색"
+        f"📍 중심: 위도 {st.session_state.cy:.5f}, 경도 {st.session_state.cx:.5f} · "
+        f"반경 {radius}m (도보 약 {walk_minutes(radius)}분)"
     )
+    st.caption("🎯 원 끌기 = 중심 이동  ·  ↔️ 가장자리 끌기 = 반경 조절  ·  📌 원 밖 클릭 = 점프  ·  🧭 지도 끌기/줌 = 탐색")
 
     channels.apply_radius_message(map_data)
     channels.apply_center_click(map_data)
@@ -57,7 +57,7 @@ def render_stats_tab(radius: int, analysis: dict, selected_categories: list[str]
         cols[1].metric("개수", f"{int(row['개수'])}곳", f"{match.index[0] + 1}위", delta_color="off")
         cols[2].metric("비중", f"{row['비율']}%", delta_color="off")
 
-    st.markdown("**업종별 개수·비율** (반경 내, 많은 순)")
+    st.markdown("**📊 업종별 개수·비율** (반경 내, 많은 순)")
     chart, chart_height = category_bar_chart(by_category, category_colors)
     if chart_height > 480:
         st.caption("전체 업종을 보려면 아래 차트를 스크롤하세요.")

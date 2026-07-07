@@ -22,10 +22,10 @@ def _dedupe_by_district(candidates: list[dict]) -> list[dict]:
 
 
 def _render_address_search() -> None:
-    st.markdown("**① 위치 — 주소/장소 검색** (예: 역삼동, 삼성역)")
+    st.markdown("**📍 위치 — 주소/장소 검색** (예: 역삼동, 삼성역)")
     with st.form("address_form", clear_on_submit=False):
         address = st.text_input("주소", label_visibility="collapsed")
-        submitted = st.form_submit_button("검색")
+        submitted = st.form_submit_button("🔍 검색")
     if submitted and address:
         st.session_state.address_candidates = None
         try:
@@ -53,7 +53,7 @@ def _render_address_search() -> None:
                 st.warning("주소 또는 장소를 찾을 수 없습니다.")
 
     if st.session_state.get("address_candidates"):
-        st.caption("검색 결과 — 원하는 위치를 누르면 바로 이동합니다")
+        st.caption("🔽 검색 결과 — 원하는 위치를 누르면 바로 이동합니다")
         for i, c in enumerate(st.session_state.address_candidates):
             label = f"{c['title']} — {c['address']}" if c["address"] and c["address"] != c["title"] else c["title"]
             if st.button(label, key=f"candidate_{i}", use_container_width=True):
@@ -68,7 +68,7 @@ def _render_address_search() -> None:
 def _render_category_filter(analysis: dict) -> list[str]:
     from core import schema
 
-    st.markdown("**② 업종 필터** — 선택한 업종만 지도 마커·업소 목록에 표시 (비우면 전체 집계)")
+    st.markdown("**🍽️ 업종 필터** — 선택한 업종만 지도 마커·업소 목록에 표시 (비우면 전체 집계)")
     if analysis["total"] == 0:
         st.caption("반경 내 음식점이 없어 선택할 업종이 없습니다.")
         return []
@@ -91,10 +91,10 @@ def _render_category_filter(analysis: dict) -> list[str]:
 def render_sidebar(analysis: dict) -> list[str]:
     """사이드바 전체를 그리고 선택된 업종 필터를 돌려준다."""
     with st.sidebar:
-        st.title("공공API기반의 상권분석")
+        st.title("🍶 공공API기반의 상권분석")
         _render_address_search()
         selected_categories = _render_category_filter(analysis)
-        if st.button("초기 위치(강남역)로"):
+        if st.button("↩️ 초기 위치(강남역)로"):
             move_to(*GANGNAM_STATION)
             st.session_state.radius_slider = DEFAULT_RADIUS_M
             st.rerun()

@@ -18,13 +18,14 @@ from analyzer.terrain import analyze
 from core.area import Area, FETCH_RADIUS_M, filter_radius
 from datasources import cache
 from datasources.base import get_provider
-from ui import sidebar, state
+from ui import sidebar, state, theme
 from ui.pages.changes import render_changes
 from ui.pages.explore import render_map_tab, render_stats_tab
 from ui.pages.outlook import render_outlook
 from ui.pages.ranking import render_ranking
 
 st.set_page_config(page_title="turf", layout="wide")
+theme.inject_base_styles()
 
 radius = state.init_session()
 

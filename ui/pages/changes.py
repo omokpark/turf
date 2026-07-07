@@ -12,6 +12,7 @@ from core import schema
 from core.area import Area, filter_radius
 from datasources import moi_store
 from timeline import trend
+from ui.components.badges import freshness_signal
 
 COLOR_OPEN = "#1a7f5c"
 COLOR_CLOSE = "#b3541e"
@@ -34,14 +35,15 @@ def render_changes(cx: float, cy: float, radius: int) -> None:
     local = filter_radius(roster.dropna(subset=[schema.LAT, schema.LON]), area)
     st.caption(
         f"기준: 중심 반경 {radius}m · 인허가 이력 {len(local):,}건 · "
-        f"수집 시점 {moi_store.freshness():%Y-%m-%d %H:%M} · 폐업 신고는 실제보다 수개월 늦게 반영될 수 있음"
+        f"폐업 신고는 실제보다 수개월 늦게 반영될 수 있음"
     )
+    st.caption(freshness_signal(moi_store.freshness()))
 
     if len(local) == 0:
         st.warning(f"반경 {radius}m 내 인허가 이력이 없습니다.")
         return
 
-    st.markdown("#### 연도별 개업·폐업 추이")
+    st.markdown("#### 📈 연도별 개업·폐업 추이")
     yearly = trend.yearly_trend(local, years=6)
     long = yearly.melt(id_vars="연도", value_vars=["개업", "폐업"], var_name="구분", value_name="건수")
     chart = (
@@ -63,7 +65,7 @@ def render_changes(cx: float, cy: float, radius: int) -> None:
     st.altair_chart(chart, width="stretch")
 
     st.divider()
-    st.markdown(f"#### 최근 개업 (최근 {RECENT_DAYS}일 — 방문 골든타임)")
+    st.markdown(f"#### 🆕 최근 개업 (최근 {RECENT_DAYS}일 — 방문 골든타임)")
     recent = trend.recent_openings(local, days=RECENT_DAYS)
     if len(recent) == 0:
         st.caption("최근 개업 건이 없습니다.")
@@ -74,10 +76,16 @@ def render_changes(cx: float, cy: float, radius: int) -> None:
             ),
             width="stretch",
             hide_index=True,
+            column_config={
+                "상호": st.column_config.TextColumn(width="medium"),
+                "업태": st.column_config.TextColumn(width="small"),
+                "주소": st.column_config.TextColumn(width="large"),
+                "개업경과일": st.column_config.NumberColumn("경과일", width="small"),
+            },
         )
 
     st.divider()
-    st.markdown("#### 자리 회전 (같은 주소, 과거 폐업 이력 있는 곳)")
+    st.markdown("#### 🔁 자리 회전 (같은 주소, 과거 폐업 이력 있는 곳)")
     turnover = trend.site_turnover(local)
     turnover = turnover[turnover["자리회전수"] > 0]
     if len(turnover) == 0:

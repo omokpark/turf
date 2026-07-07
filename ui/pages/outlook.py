@@ -14,6 +14,7 @@ from datasources import moi_store
 from signals.base import AreaContext
 from signals.outlook import phase_trajectory
 from signals.registry import available_indicators
+from ui.components.badges import freshness_signal, percentile_signal
 
 # 지표 모듈 import = 레지스트리 등록 (파일 1개 추가 = 카드 1장 추가)
 import signals.age_mix  # noqa: F401
@@ -56,8 +57,9 @@ def render_outlook(cx: float, cy: float) -> None:
     st.caption(
         f"기준: 중심 반경 {OUTLOOK_RADIUS_M}m · 인허가 이력 {len(local):,}건 "
         f"(보유 데이터: {', '.join(summary['업종'] + ' ' + summary['행수'].map('{:,}'.format) + '건')}) · "
-        f"수집 시점 {freshness:%Y-%m-%d %H:%M} · 폐업 신고는 실제보다 수개월 늦게 반영될 수 있음"
+        f"폐업 신고는 실제보다 수개월 늦게 반영될 수 있음"
     )
+    st.caption(freshness_signal(freshness))
 
     if len(local) < MIN_SAMPLE:
         st.warning(
@@ -68,6 +70,10 @@ def render_outlook(cx: float, cy: float) -> None:
 
     ctx = AreaContext(area=area, establishments=local, rosters={"moi": local}, reference=roster)
 
+    st.markdown(
+        "🔴🟠🟡⚪ 아래 배지는 '좋다/나쁘다'가 아니라 **수집 구역 안에서 이 값이 얼마나 "
+        "두드러지는지**(통계적 상대 위치)만 나타낸다."
+    )
     _render_phase_matrix(local, ctx)
     st.divider()
     _render_indicator_cards(ctx)
@@ -86,7 +92,7 @@ def _render_phase_matrix(local: pd.DataFrame, ctx: AreaContext) -> None:
         return
 
     latest = traj.iloc[-1]
-    st.markdown(f"#### 구역 국면 — {int(latest['연도'])}년 기준 **{latest['국면']}**")
+    st.markdown(f"#### 🧭 구역 국면 — {int(latest['연도'])}년 기준 **{latest['국면']}**")
     st.caption("막대 위=개업, 아래=폐업, 선=순증. 상단 이모지가 그 해의 국면 (올해는 부분 연도라 제외).")
 
     # phase_trajectory는 증감·국면까지만 주므로 순증은 여기서 파생
@@ -149,6 +155,7 @@ def _render_indicator_cards(ctx: AreaContext) -> None:
     indicators = available_indicators({"moi"})
     results = [(ind, ind.compute(ctx)) for ind in indicators]
 
+    st.markdown("##### 📊 핵심 지표")
     cols = st.columns(len(results))
     for col, (ind, res) in zip(cols, results):
         with col:
@@ -158,7 +165,7 @@ def _render_indicator_cards(ctx: AreaContext) -> None:
                 delta_txt = f"직전 {ind.fmt(res.previous)}"
             st.metric(ind.label, value_txt, delta_txt, delta_color="off")
             if res.percentile is not None:
-                st.caption(f"수집 구역 내 상위 {100 - res.percentile:.0f}% 수준")
+                st.caption(percentile_signal(100 - res.percentile))
 
     for ind, res in results:
         with st.expander(f"{ind.label} — 근거·추이"):
