@@ -5,6 +5,8 @@
 근거가 아니라 "이 구역 전체가 지금 어떤 판인가"라는 별도 정보이기 때문이다.
 """
 
+import html
+
 import folium
 import pandas as pd
 import streamlit as st
@@ -169,13 +171,17 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
     st.markdown("#### 지도")
     m = folium.Map(location=[cy, cx], zoom_start=16)
     for _, row in top.dropna(subset=[schema.LAT, schema.LON]).iterrows():
+        # 상호명·근거 배지는 외부 데이터(인허가 등록 상호, Naver 블로그 텍스트 등)라
+        # HTML로 그대로 넣으면 저장형 XSS가 된다 — 반드시 escape 후 삽입한다.
+        shop_name = html.escape(str(row[schema.NAME]))
+        reason = html.escape(str(row["근거"]))
         folium.CircleMarker(
             location=[row[schema.LAT], row[schema.LON]],
             radius=6,
             color=MARKER_COLOR,
             fill=True,
             fill_opacity=0.85,
-            popup=folium.Popup(f"<b>{row[schema.NAME]}</b><br>{row['근거']}", max_width=260),
-            tooltip=f"{row['순위']}위 · {row[schema.NAME]}",
+            popup=folium.Popup(f"<b>{shop_name}</b><br>{reason}", max_width=260),
+            tooltip=folium.Tooltip(f"{row['순위']}위 · {shop_name}", permanent=False, direction="top", sticky=False),
         ).add_to(m)
     st_folium(m, height=420, use_container_width=True, key="ranking_map")

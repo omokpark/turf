@@ -87,7 +87,7 @@ def _add_shop_layers(m: folium.Map, analysis: dict, selected_categories: list[st
                 color=category_colors.get(row[schema.CAT_S], NEUTRAL_COLOR),
                 fill=True,
                 fill_opacity=0.85,
-                tooltip=folium.Tooltip(row[schema.NAME], permanent=False, direction="top", sticky=False),
+                tooltip=folium.Tooltip(shop_name, permanent=False, direction="top", sticky=False),
                 popup=folium.Popup(f"<b>{shop_name}</b><br>{shop_category}", max_width=220),
             ).add_to(layer)
 
