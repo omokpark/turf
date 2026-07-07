@@ -55,7 +55,9 @@ def test_normalize_name_strips_branch_suffix():
     assert normalize_name("김밥천국(2호점)") == "김밥천국"
 
 
-def test_franchise_flags_repeated_name_as_chain():
+def test_franchise_flags_repeated_name_as_chain(monkeypatch):
+    # 전국 스캔 파일이 있어도 이 테스트는 폴백(수집 범위) 경로를 검증한다
+    monkeypatch.setattr("signals.franchise.load_national_counts", lambda: None)
     # 괄호 안 지점 표기(정규화 시 제거됨)만 다르고 나머지가 같아야 같은 상호로 묶인다 —
     # normalize_name은 접미사만 지우는 근사치라 서로 다른 지점명이 섞이면 안 뭉친다.
     rows = [{schema.NAME: f"김밥천국({i}호점)"} for i in range(3)] + [{schema.NAME: "독립식당"}]
@@ -67,6 +69,22 @@ def test_franchise_flags_repeated_name_as_chain():
     indep_id = df[df[schema.NAME] == "독립식당"][schema.SRC_ID].iloc[0]
     assert result.loc[chain_id, signal_base.VALUE] == 0.0
     assert result.loc[indep_id, signal_base.VALUE] == 1.0
+
+
+def test_franchise_uses_national_counts_when_available(monkeypatch):
+    """전국 스캔이 있으면 동네 유일 지점의 대형 체인(써브웨이 케이스)도 잡는다."""
+    national = pd.Series({"써브웨이강남": 348, "동네백반": 1})
+    monkeypatch.setattr("signals.franchise.load_national_counts", lambda: national)
+    monkeypatch.setattr("signals.franchise.scan_freshness", lambda: "2026-07-07")
+    df = make_roster([{schema.NAME: "(주)써브웨이 강남역점"}, {schema.NAME: "동네백반"}])
+    result = Franchise().compute(_ctx(df)).set_index(signal_base.EST_ID)
+
+    chain_id = df[df[schema.NAME] == "(주)써브웨이 강남역점"][schema.SRC_ID].iloc[0]
+    indep_id = df[df[schema.NAME] == "동네백반"][schema.SRC_ID].iloc[0]
+    assert result.loc[chain_id, signal_base.VALUE] == 0.0
+    assert "전국" in result.loc[chain_id, signal_base.BADGE] and "348" in result.loc[chain_id, signal_base.BADGE]
+    assert result.loc[indep_id, signal_base.VALUE] == 1.0
+    assert pd.isna(result.loc[indep_id, signal_base.BADGE])
 
 
 # ── M5 주류 인접성 지수 ───────────────────────────────────────────────────────

@@ -20,6 +20,8 @@ from signals import base as signal_base
 #   제외가 과하다는 사용자 피드백 2026-07-06).
 # - growth_momentum 0.5 / conversion_vector 0.5 (Phase 5): 골목·자리의 맥락 부스터 —
 #   업소 자체의 신호(개업 타이밍·생존)보다 낮게.
+# - night_index 0.5 (Phase 5, M7 v1): 야간 맥락 부스터. liquor_adjacency와 축이 겹치는
+#   면이 있으나(주류친화 밀도) 심야 인구 축이 추가돼 별도 유지 — 둘 다 낮은 가중으로.
 DEFAULT_WEIGHTS = {
     "liquor_adjacency": 0.5,
     "recent_opening": 1.5,
@@ -27,6 +29,7 @@ DEFAULT_WEIGHTS = {
     "franchise": 0.0,
     "growth_momentum": 0.5,
     "conversion_vector": 0.5,
+    "night_index": 0.5,
 }
 FALLBACK_WEIGHT = 1.0
 

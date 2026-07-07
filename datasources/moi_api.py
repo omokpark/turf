@@ -38,6 +38,32 @@ SERVICES = {
 _TRANSFORMER = Transformer.from_crs("EPSG:5174", "EPSG:4326", always_xy=True)
 
 
+def fetch_page(category: str, conds: dict[str, str] | None, page: int) -> tuple[list[dict], int, int]:
+    """단일 페이지 조회 → (행 목록, 전체 페이지 수, 전체 건수).
+
+    전국 스캔(national_names)처럼 수십만 행을 메모리에 쌓지 않고 페이지 단위로
+    처리해야 하는 호출부를 위해 분리했다.
+    """
+    service = SERVICES[category]
+    key = urllib.parse.quote(config.data_go_kr_key())
+    query = f"serviceKey={key}&pageNo={page}&numOfRows={PAGE_SIZE}&returnType=json"
+    for cond_key, value in (conds or {}).items():
+        query += f"&{urllib.parse.quote(f'cond[{cond_key}]')}={urllib.parse.quote(value)}"
+    body = _request(f"{BASE_URL}/{service}/info?{query}")
+    response = body.get("response", {})
+    header = response.get("header", {})
+    if header.get("resultCode") not in ("0", "00"):
+        raise RuntimeError(f"행안부 API 오류: {header.get('resultCode')}/{header.get('resultMsg')}")
+    payload = response.get("body", {})
+    total_count = int(payload.get("totalCount", 0))
+    items = payload.get("items") or {}
+    page_rows = items.get("item") or []
+    if isinstance(page_rows, dict):  # 1건이면 dict로 오는 XML 관례 방어
+        page_rows = [page_rows]
+    total_pages = max(1, -(-total_count // PAGE_SIZE))
+    return page_rows, total_pages, total_count
+
+
 def fetch_pages(
     category: str,
     conds: dict[str, str] | None = None,
@@ -49,29 +75,11 @@ def fetch_pages(
     conds 예: {"OPN_ATMY_GRP_CD::EQ": "3220000"} (강남구)
     on_progress: (page, total_pages, total_count) 콜백 — CLI 진행 표시용.
     """
-    service = SERVICES[category]
-    key = urllib.parse.quote(config.data_go_kr_key())
     rows: list[dict] = []
     page = 1
-    total_count = None
     while True:
-        query = f"serviceKey={key}&pageNo={page}&numOfRows={PAGE_SIZE}&returnType=json"
-        for cond_key, value in (conds or {}).items():
-            query += f"&{urllib.parse.quote(f'cond[{cond_key}]')}={urllib.parse.quote(value)}"
-        body = _request(f"{BASE_URL}/{service}/info?{query}")
-        response = body.get("response", {})
-        header = response.get("header", {})
-        if header.get("resultCode") not in ("0", "00"):
-            raise RuntimeError(f"행안부 API 오류: {header.get('resultCode')}/{header.get('resultMsg')}")
-        payload = response.get("body", {})
-        total_count = int(payload.get("totalCount", 0))
-        items = payload.get("items") or {}
-        page_rows = items.get("item") or []
-        if isinstance(page_rows, dict):  # 1건이면 dict로 오는 XML 관례 방어
-            page_rows = [page_rows]
+        page_rows, total_pages, total_count = fetch_page(category, conds, page)
         rows.extend(page_rows)
-
-        total_pages = max(1, -(-total_count // PAGE_SIZE))
         if on_progress:
             on_progress(page, total_pages, total_count)
         if page >= total_pages or not page_rows:

@@ -205,8 +205,14 @@ Day 11 마무리 (Phase 4 — Naver 평판 축, 같은 세션에서 진행. Phas
 - 강남역 400m 실측: 453곳 전수 조회(캐시 674건), 블로그 관측 421곳. **목적지 지수 6위 '지안식당' = 밀집도 1/10 구간에서 블로그 100건 — 음영지역 숨은 잠재 업소 가설의 첫 실물 사례.** 버즈: 개업 98일차 블로그 100건(샐러링) 등 9곳.
 - 이 PC `.env`에 NAVER 키 2개 추가됨(회사 PC와 별개로 재입력 필요했음 — .env는 gitignore).
 
-▶ 다음 세션 시작점: 목적지 지수 상위권 육안 검증(아는 지역에서 "진짜 찾아가는 집"인지) → **M1 가설 판단 → Places 결제 투입 여부 결정** (REDESIGN_PLAN Phase 4 잔여 체크박스). 그 다음 **Phase 5 (확장 모델 M3/M6/M7 + 증분 갱신 + M4 전국 스캔)**.
+Day 12 (Phase 5 마무리 — M7 야간 지수 + M4 전국 스캔, 이번 세션에서 진행. M3/M6은 회사 PC에서 선행):
+- **M4 전국 스캔**: 영업중 필터(SALS_STTS_CD=01)로 호출량 24,600→7,134회 절감(전국 영업중 71.3만 건) — 3일 분할이 하루 안으로. `datasources/national_names.py`: 페이지 단위 정규화 상호만 집계(71만 행 메모리 미적재), 200페이지 체크포인트로 중단·재개 가능(`python -m datasources.national_names` 재실행 = 이어서). franchise 신호는 전국 카운트(임계 5) 우선, 없으면 수집범위 폴백(임계 3). ⚠️ 전국 무필터 조회는 API가 페이지당 ~2.5s로 느려 **전체 약 5시간** — nohup으로 실행.
+- **M7 야간 상권 지수 v1** (`signals/night_index.py` + `datasources/seoul.py` + config.seoul_key): 주변 300m 명시적 주류 업태(affinity≥2) 비중 백분위 × 행정동 심야(23~04시) 생활인구 비율. 좌표→행정동 = VWorld 리버스 지오코딩(level4AC 앞 8자리, 강남역→역삼1동 11680640 실검증). 생활인구 게시 지연 대응(14일 전부터 탐색). 서울 밖 우아한 강등. **함정 기록: liquor_affinity는 한식도 1점(반주)이라 ≥1로 세면 전부 주류친화 — 야간 지수는 ≥2(호프·주점급)만 센다.**
+- `.env`에 SEOUL_OPEN_DATA_KEY 추가됨(이 PC). moi_api에 fetch_page(단일 페이지) 분리.
+- 검증: pytest 85개 그린. 강남역 실측 — 야간 지수 453행/배지 92곳(역삼1동 심야 56%), M3 배지 185곳·M6 배지 7곳 스팟체크 리스트 생성(육안 확인 잔여).
 
-아직 안 한 것: REDESIGN_PLAN.md Phase 5~6 (확장 모델·증분 갱신 → Places 완전판). 매칭 임계 튜닝(수작업 라벨 50쌍)은 matcher 실사용 시점에.
+▶ 다음 세션 시작점: ① 전국 스캔 완료 확인(`data/cache/moi/national_name_counts.meta.json` 존재 여부, 미완이면 `python -m datasources.national_names` 재실행) → franchise 전국 모드 실검증(써브웨이가 '전국 N곳' 배지 받는지) ② 육안 검증 3건(M1 목적지 지수 상위권 → **Places 결제 투입 판단**, M3/M6 배지 스팟체크, 아웃룩 국면 방향) ③ **Phase 6 (Places 완전판)** 또는 지하철 심야 승하차(M7 v1.1).
 
-Day 11까지의 변경분은 모두 커밋·푸시 완료. 새 PC에서는 clone/pull 후 `.env` 채우고(NAVER 키 2개 포함 4개) `pip install -r requirements.txt`(rapidfuzz 추가) 하면 이어서 작업 가능.
+아직 안 한 것: Phase 6 (Places). M7 v1.1(지하철 축). 매칭 임계 튜닝(matcher 실사용 시점에).
+
+Day 12까지의 변경분은 모두 커밋·푸시 완료(전국 스캔 결과 parquet은 data/라 gitignore — PC마다 스캔 필요). 새 PC에서는 clone/pull 후 `.env` 채우고(키 5개: data.go.kr·VWorld·NAVER 2개·SEOUL) `pip install -r requirements.txt` 하면 이어서 작업 가능.

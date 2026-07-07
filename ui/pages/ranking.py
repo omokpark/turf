@@ -12,7 +12,7 @@ from streamlit_folium import st_folium
 
 from core import schema
 from core.area import Area, OUTLOOK_RADIUS_M, filter_radius
-from datasources import moi_store, naver
+from datasources import moi_store, naver, seoul
 from scorers.base import available_scorers, validate_score_result
 from signals.base import AreaContext
 from signals.outlook import phase_trajectory
@@ -24,6 +24,7 @@ import signals.conversion_vector  # noqa: F401
 import signals.franchise  # noqa: F401
 import signals.growth_momentum  # noqa: F401
 import signals.liquor_adjacency  # noqa: F401
+import signals.night_index  # noqa: F401
 import signals.recent_opening  # noqa: F401
 import signals.review_momentum  # noqa: F401
 import signals.survivor  # noqa: F401
@@ -58,8 +59,12 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
         st.caption(f"구역 국면(반경 {OUTLOOK_RADIUS_M}m 기준, 참고용 맥락): **{traj.iloc[-1]['국면']}**")
 
     ctx = AreaContext(area=area, establishments=local, rosters={"moi": local}, reference=roster)
-    # Naver 키가 있으면 평판 신호(리뷰·버즈)와 목적지 지수가 자동으로 켜진다
-    providers = {"moi"} | ({"naver"} if naver.available() else set())
+    # 키가 있으면 해당 신호가 자동으로 켜진다: naver(리뷰·버즈·목적지 지수), seoul(야간 지수)
+    providers = {"moi"}
+    if naver.available():
+        providers.add("naver")
+    if seoul.available():
+        providers.add("seoul")
     signals_avail = available_signals(providers)
     if not signals_avail:
         st.info("가용한 신호가 없습니다.")

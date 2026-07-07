@@ -41,3 +41,11 @@ def naver_keys() -> tuple[str, str]:
     if not (cid and secret):
         raise RuntimeError(".env에 NAVER_CLIENT_ID/NAVER_CLIENT_SECRET이 설정되어 있지 않습니다.")
     return cid, secret
+
+
+def seoul_key() -> str:
+    """서울 열린데이터광장(data.seoul.go.kr) 인증키 — 생활인구·지하철 시간대별."""
+    key = os.getenv("SEOUL_OPEN_DATA_KEY")
+    if not key:
+        raise RuntimeError(".env에 SEOUL_OPEN_DATA_KEY가 설정되어 있지 않습니다.")
+    return key

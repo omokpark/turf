@@ -1,25 +1,30 @@
-"""프랜차이즈 판별(M4) — 상호명 출현 빈도로 체인점을 걸러 독립 업소만 남긴다.
+"""프랜차이즈 판별(M4) — 상호명 출현 빈도로 체인점을 식별하는 정보 배지 신호.
 
-프랜차이즈는 본사가 영업방침을 일괄 결정하므로 개별 방문 효율이 낮다는 판단 하에,
-같은 정규화 상호가 여러 번 나오면 체인으로 간주해 신호값을 낮춘다(독립 업소=1, 체인=0
-인 필터형 신호).
+점수에는 반영하지 않고(가중치 0 — 요즘은 대부분 프랜차이즈라 제외가 과하다는 사용자
+피드백) 체인 추정 배지만 붙인다. VALUE는 독립=1/체인=0 필터형 값으로 유지해, 필요 시
+다른 스코어러가 쓸 수 있게 둔다.
 
-⚠️ 원 계획(REDESIGN_PLAN.md)은 "전국 1회 스캔" 기준 출현 빈도를 상정했으나, 아직
-전국 스캔 데이터가 없다(Phase 5 예정 — 자치단체별로만 수집됨). 그래서 지금은
-`ctx.reference`(수집된 범위, 현재는 자치단체 단위)를 기준으로 계산하고 배지에 그
-범위를 명시한다 — 관측 사실만 말한다는 원칙상 "전국 기준"이라고 과장하지 않는다.
+출현 빈도의 기준(우선순위):
+1) **전국 스캔** (datasources/national_names — 전국 영업중 업소, Phase 5): 같은 정규화
+   상호가 전국 NATIONAL_CHAIN_THRESHOLD곳 이상이면 체인. 전국 기준이라 동네 유일
+   지점의 대형 체인(예: 써브웨이)도 잡는다. 흔한 상호의 우연 동명 오카운트를 줄이기
+   위해 임계는 로컬보다 높게 둔다.
+2) 폴백 — 수집 범위(자치단체): 전국 스캔 파일이 없으면 ctx.reference 안 출현 빈도로
+   계산하고 배지에 그 범위를 명시한다 — 관측 사실만 말한다는 원칙상 과장하지 않는다.
 
-상호명 정규화는 matching/normalize.py를 쓴다 (Phase 4에서 단일 출처화).
+상호명 정규화는 matching/normalize.py (단일 출처).
 """
 
 import pandas as pd
 
 from core import schema
+from datasources.national_names import load_national_counts, scan_freshness
 from matching.normalize import normalize_name
 from signals.base import AreaContext, BADGE, DETAIL, EST_ID, RAW, SIGNAL_COLUMNS, VALUE
 from signals.registry import register_signal
 
-CHAIN_THRESHOLD = 3  # 정규화 상호가 이 횟수 이상 출현하면 체인으로 간주
+CHAIN_THRESHOLD = 3  # 폴백(수집 범위) 기준
+NATIONAL_CHAIN_THRESHOLD = 5  # 전국 기준 — 우연 동명 오카운트 방어를 위해 더 높게
 
 
 def _normalize_series(s: pd.Series) -> pd.Series:
@@ -38,8 +43,18 @@ class Franchise:
         if len(open_df) == 0:
             return pd.DataFrame(columns=SIGNAL_COLUMNS)
 
-        reference = ctx.reference if ctx.reference is not None else ctx.establishments
-        counts = _normalize_series(reference[schema.NAME]).value_counts()
+        national = load_national_counts()
+        if national is not None:
+            counts = national
+            threshold = NATIONAL_CHAIN_THRESHOLD
+            scope = "전국"
+            detail = f"전국 영업중 업소 정규화 상호 출현 빈도 (스캔 {scan_freshness() or '기준일 미상'})"
+        else:
+            reference = ctx.reference if ctx.reference is not None else ctx.establishments
+            counts = _normalize_series(reference[schema.NAME]).value_counts()
+            threshold = CHAIN_THRESHOLD
+            scope = "수집 범위"
+            detail = "정규화 상호 출현 빈도는 현재 수집된 자치단체 범위 기준 (전국 스캔 파일 없음)"
 
         open_df["_정규화상호"] = _normalize_series(open_df[schema.NAME])
         open_df["_출현횟수"] = open_df["_정규화상호"].map(counts).fillna(1).astype(int)
@@ -47,13 +62,11 @@ class Franchise:
         rows = []
         for _, row in open_df.iterrows():
             n = int(row["_출현횟수"])
-            is_chain = n >= CHAIN_THRESHOLD
+            is_chain = n >= threshold
             value = 0.0 if is_chain else 1.0
-            # 배지는 체인일 때만 — "독립 추정"을 모든 업소에 붙이면 노이즈다. 요즘은 대부분이
-            # 프랜차이즈라 체인이 방문 대상에서 빠질 이유도 없으므로(사용자 피드백 2026-07-06),
-            # 점수 반영은 scorer 가중치 0으로 껐고 이 신호는 정보 배지로만 쓴다.
+            # 배지는 체인일 때만 — "독립 추정"을 모든 업소에 붙이면 노이즈다.
             badge = (
-                f"{self.badge_icon} 체인 추정 — 수집 범위 내 '{row['_정규화상호']}' {n}회 출현"
+                f"{self.badge_icon} 체인 추정 — {scope} '{row['_정규화상호']}' {n:,}곳 영업 중"
                 if is_chain
                 else None
             )
@@ -63,7 +76,7 @@ class Franchise:
                     VALUE: value,
                     RAW: n,
                     BADGE: badge,
-                    DETAIL: "정규화 상호 출현 빈도는 현재 수집된 자치단체 범위 기준 (전국 스캔 전, Phase 5 예정)",
+                    DETAIL: detail,
                 }
             )
         return pd.DataFrame(rows, columns=SIGNAL_COLUMNS)
