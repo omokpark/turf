@@ -26,6 +26,8 @@ from matching.normalize import normalize_name
 
 OPEN_COND = {"SALS_STTS_CD::EQ": "01"}
 CHECKPOINT_EVERY_PAGES = 200
+PAGE_RETRY_ATTEMPTS = 6  # moi_api._request가 이미 3회 재시도하지만, 장시간 스캔에선
+# 그걸 다 소진하는 연결 끊김(ConnectionResetError 등)이 실제로 발생한다 — 한 겹 더 감싼다.
 
 COUNTS_PATH = config.CACHE_DIR / "moi" / "national_name_counts.parquet"
 META_PATH = config.CACHE_DIR / "moi" / "national_name_counts.meta.json"
@@ -61,6 +63,25 @@ def _save_checkpoint(state: dict) -> None:
     )
 
 
+def _fetch_page_resilient(category: str, page: int, log) -> tuple[list[dict], int, int]:
+    """moi_api.fetch_page을 감싸 장시간 스캔 중 발생하는 연결 끊김을 흡수한다.
+
+    moi_api._request 자체도 3회 재시도하지만(1·2·4초 백오프), 5시간짜리 스캔에서는
+    그 3회를 다 소진하는 순간이 실제로 온다(ConnectionResetError 등, 2026-07-08
+    관측) — 여기서 더 길게(최대 6회, 최대 60초) 한 번 더 버틴다.
+    """
+    last_error = None
+    for attempt in range(PAGE_RETRY_ATTEMPTS):
+        try:
+            return moi_api.fetch_page(category, OPEN_COND, page)
+        except Exception as e:
+            last_error = e
+            wait = min(60, 5 * (attempt + 1))
+            log(f"  [{category}] {page}페이지 조회 실패({e}) — {wait}초 후 재시도 ({attempt + 1}/{PAGE_RETRY_ATTEMPTS})")
+            time.sleep(wait)
+    raise RuntimeError(f"{category} {page}페이지: {PAGE_RETRY_ATTEMPTS}회 재시도 후에도 실패 — {last_error}")
+
+
 def scan(categories: list[str] | None = None, log=print) -> pd.DataFrame:
     """전국 영업중 상호 스캔 (재개 가능). 완료 시 parquet 저장 후 카운트 DataFrame 반환."""
     categories = categories or list(moi_api.SERVICES)
@@ -74,7 +95,7 @@ def scan(categories: list[str] | None = None, log=print) -> pd.DataFrame:
         page = state["next_page"] if state["category"] == category else 1
         state["category"] = category
         while True:
-            rows, total_pages, total_count = moi_api.fetch_page(category, OPEN_COND, page)
+            rows, total_pages, total_count = _fetch_page_resilient(category, page, log)
             state["counts"].update(
                 normalize_name(r.get("BPLC_NM", "")) for r in rows if r.get("BPLC_NM")
             )
