@@ -24,7 +24,7 @@ from ui.pages.explore import render_map_tab, render_stats_tab
 from ui.pages.outlook import render_outlook
 from ui.pages.ranking import render_ranking
 
-st.set_page_config(page_title="turf", layout="wide")
+st.set_page_config(page_title="Sales Radar", layout="wide")
 theme.inject_base_styles()
 
 radius = state.init_session()

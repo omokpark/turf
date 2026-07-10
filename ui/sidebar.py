@@ -91,7 +91,7 @@ def _render_category_filter(analysis: dict) -> list[str]:
 def render_sidebar(analysis: dict) -> list[str]:
     """사이드바 전체를 그리고 선택된 업종 필터를 돌려준다."""
     with st.sidebar:
-        st.title("🍶 공공API기반의 상권분석")
+        st.title("🍶 Sales Radar")
         _render_address_search()
         selected_categories = _render_category_filter(analysis)
         if st.button("↩️ 초기 위치(강남역)로"):
