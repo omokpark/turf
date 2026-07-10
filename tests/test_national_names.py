@@ -12,6 +12,9 @@ def scan_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(national_names, "META_PATH", tmp_path / "meta.json")
     monkeypatch.setattr(national_names, "CHECKPOINT_PATH", tmp_path / "ckpt.json")
     monkeypatch.setattr(national_names.moi_api, "REQUEST_INTERVAL_S", 0)
+    # 재시도 백오프를 0으로 — 실패 경로 테스트가 실제로 수십 분 sleep하지 않게 한다
+    monkeypatch.setattr(national_names, "RETRY_BACKOFF_BASE_S", 0)
+    monkeypatch.setattr(national_names, "RETRY_BACKOFF_MAX_S", 0)
     return tmp_path
 
 
@@ -46,6 +49,26 @@ def test_scan_counts_normalized_names(scan_paths, monkeypatch):
     assert national_names.load_national_counts() is not None
     assert national_names.scan_freshness() is not None
     assert not national_names.CHECKPOINT_PATH.exists()  # 완료 시 체크포인트 정리
+
+
+def test_scan_from_csv_counts_open_only(scan_paths, tmp_path):
+    """CSV 경로: 영업중(코드 01)만 정규화 상호로 집계하고 폐업은 제외한다."""
+    csv = tmp_path / "permit.csv"
+    rows = [
+        "사업장명,영업상태코드",
+        "김밥천국(1호점),01",
+        "김밥천국 2호점,01",   # 정규화 시 김밥천국으로 합산
+        "폐업한집,03",         # 폐업 — 제외
+        "독립식당,01",
+    ]
+    csv.write_text("\n".join(rows), encoding="cp949")
+
+    df = national_names.scan_from_csv(csv, log=lambda *_: None)
+    counts = df.set_index("정규화상호")["출현횟수"]
+    assert counts["김밥천국"] == 2
+    assert counts["독립식당"] == 1
+    assert "폐업한집" not in counts.index  # 영업중만
+    assert national_names.load_national_counts() is not None  # franchise가 읽는 포맷으로 저장
 
 
 def test_scan_resumes_from_checkpoint(scan_paths, monkeypatch):

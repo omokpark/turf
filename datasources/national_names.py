@@ -26,8 +26,14 @@ from matching.normalize import normalize_name
 
 OPEN_COND = {"SALS_STTS_CD::EQ": "01"}
 CHECKPOINT_EVERY_PAGES = 200
-PAGE_RETRY_ATTEMPTS = 6  # moi_api._request가 이미 3회 재시도하지만, 장시간 스캔에선
-# 그걸 다 소진하는 연결 끊김(ConnectionResetError 등)이 실제로 발생한다 — 한 겹 더 감싼다.
+# moi_api._request가 이미 3회 재시도하지만, ~5시간짜리 전국 스캔에선 그걸 다 소진하는
+# 네트워크 끊김(ConnectionResetError·read timeout)이 실제로 여러 번 발생했다. 노트북에서
+# 밤새 돌리는 잡이므로, 수십 분짜리 wifi 끊김도 프로세스를 죽이지 않도록 아주 끈질기게
+# 재시도한다(30회 × 최대 60s ≈ 25분까지 버팀). 체크포인트가 200페이지마다 저장되므로
+# 그래도 죽으면 재실행 시 이어진다.
+PAGE_RETRY_ATTEMPTS = 30
+RETRY_BACKOFF_BASE_S = 5   # 재시도 대기 = min(MAX, BASE×시도횟수). 테스트에서 0으로 패치.
+RETRY_BACKOFF_MAX_S = 60
 
 COUNTS_PATH = config.CACHE_DIR / "moi" / "national_name_counts.parquet"
 META_PATH = config.CACHE_DIR / "moi" / "national_name_counts.meta.json"
@@ -66,9 +72,10 @@ def _save_checkpoint(state: dict) -> None:
 def _fetch_page_resilient(category: str, page: int, log) -> tuple[list[dict], int, int]:
     """moi_api.fetch_page을 감싸 장시간 스캔 중 발생하는 연결 끊김을 흡수한다.
 
-    moi_api._request 자체도 3회 재시도하지만(1·2·4초 백오프), 5시간짜리 스캔에서는
-    그 3회를 다 소진하는 순간이 실제로 온다(ConnectionResetError 등, 2026-07-08
-    관측) — 여기서 더 길게(최대 6회, 최대 60초) 한 번 더 버틴다.
+    moi_api._request 자체도 3회 재시도하지만(1·2·4초 백오프), 장시간 스캔에서는 그 3회를
+    다 소진하는 순간이 실제로 온다(ConnectionResetError·read timeout, 2026-07-08 관측)
+    — 여기서 PAGE_RETRY_ATTEMPTS만큼(수십 분까지) 더 버틴다. (CSV 경로 도입 후 이 API
+    스캔은 폴백이지만 재시도는 유지.)
     """
     last_error = None
     for attempt in range(PAGE_RETRY_ATTEMPTS):
@@ -76,7 +83,7 @@ def _fetch_page_resilient(category: str, page: int, log) -> tuple[list[dict], in
             return moi_api.fetch_page(category, OPEN_COND, page)
         except Exception as e:
             last_error = e
-            wait = min(60, 5 * (attempt + 1))
+            wait = min(RETRY_BACKOFF_MAX_S, RETRY_BACKOFF_BASE_S * (attempt + 1))
             log(f"  [{category}] {page}페이지 조회 실패({e}) — {wait}초 후 재시도 ({attempt + 1}/{PAGE_RETRY_ATTEMPTS})")
             time.sleep(wait)
     raise RuntimeError(f"{category} {page}페이지: {PAGE_RETRY_ATTEMPTS}회 재시도 후에도 실패 — {last_error}")
@@ -113,24 +120,69 @@ def scan(categories: list[str] | None = None, log=print) -> pd.DataFrame:
         state["next_page"] = 1
         _save_checkpoint(state)
 
-    df = pd.DataFrame(
-        {"정규화상호": list(state["counts"].keys()), "출현횟수": list(state["counts"].values())}
-    ).sort_values("출현횟수", ascending=False).reset_index(drop=True)
-    COUNTS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(COUNTS_PATH, index=False)
-    META_PATH.write_text(
-        json.dumps(
-            {"완료시각": datetime.now().isoformat(timespec="seconds"), "업종": state["done"],
-             "고유상호": len(df), "총업소": int(df["출현횟수"].sum())},
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
+    df = _write_counts(state["counts"], categories=state["done"])
     CHECKPOINT_PATH.unlink(missing_ok=True)
     log(f"완료: 고유 상호 {len(df):,}개 / 총 {int(df['출현횟수'].sum()):,}곳 → {COUNTS_PATH}")
     return df
 
 
+def _write_counts(counts: Counter, categories: list[str]) -> pd.DataFrame:
+    """Counter(정규화상호→건수)를 franchise 신호가 읽는 parquet+meta로 저장한다.
+
+    API 스캔과 CSV 집계가 공유하는 출력 지점 — 어느 경로로 만들든 결과 포맷이 같아야
+    franchise.load_national_counts()가 그대로 읽는다.
+    """
+    df = pd.DataFrame(
+        {"정규화상호": list(counts.keys()), "출현횟수": list(counts.values())}
+    ).sort_values("출현횟수", ascending=False).reset_index(drop=True)
+    COUNTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(COUNTS_PATH, index=False)
+    META_PATH.write_text(
+        json.dumps(
+            {"완료시각": datetime.now().isoformat(timespec="seconds"), "업종": categories,
+             "고유상호": len(df), "총업소": int(df["출현횟수"].sum())},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return df
+
+
+# ── CSV 경로: 공공데이터포털 전국 인허가 CSV(LOCALDATA 형식, cp949) 일괄 집계 ──────
+# 전국 스캔을 API로 돌리면 6,700+ 호출·5시간이라 네트워크 끊김에 계속 죽었다. 전국
+# 프랜차이즈 빈도는 거의 정적이라(몇 달에 한 번 갱신) 브라우저로 받은 CSV를 1회 집계하는
+# 편이 훨씬 안정적이다 (2026-07-11 결정). API 스캔 경로는 폴백으로 남겨둔다.
+CSV_NAME_COL = "사업장명"
+CSV_STATUS_COL = "영업상태코드"
+CSV_OPEN_CODE = "01"  # 영업/정상 (03=폐업)
+CSV_CHUNK = 200_000
+
+
+def scan_from_csv(csv_path, category_label: str = "일반음식점(CSV)", log=print) -> pd.DataFrame:
+    """전국 인허가 CSV에서 영업중 업소의 정규화 상호 빈도를 집계 → parquet 저장.
+
+    228만 행(폐업 포함)이라 chunk 스트리밍으로 메모리를 아끼고, 영업중만 세어
+    API 스캔 결과와 동일한 정의를 유지한다.
+    """
+    counts: Counter = Counter()
+    total_open = 0
+    reader = pd.read_csv(
+        csv_path, encoding="cp949", usecols=[CSV_NAME_COL, CSV_STATUS_COL],
+        dtype=str, chunksize=CSV_CHUNK, on_bad_lines="skip",
+    )
+    for i, chunk in enumerate(reader, 1):
+        opened = chunk[chunk[CSV_STATUS_COL] == CSV_OPEN_CODE]
+        total_open += len(opened)
+        counts.update(normalize_name(n) for n in opened[CSV_NAME_COL].dropna())
+        log(f"  청크 {i} 처리 — 누적 영업중 {total_open:,}건 / 고유 상호 {len(counts):,}")
+    df = _write_counts(counts, categories=[category_label])
+    log(f"완료: 고유 상호 {len(df):,}개 / 총 {int(df['출현횟수'].sum()):,}곳 → {COUNTS_PATH}")
+    return df
+
+
 if __name__ == "__main__":
-    scan()
+    if len(sys.argv) > 1 and sys.argv[1] == "--csv":
+        scan_from_csv(sys.argv[2])
+    else:
+        scan()
     sys.exit(0)
