@@ -10,9 +10,10 @@ import streamlit as st
 
 from core import schema
 from core.area import Area, MAX_RADIUS_M, MIN_RADIUS_M, filter_radius, walk_minutes
+from datasources import moi_store
 from signals.outlook import liquor_affinity
 from timeline import trend
-from ui import channels
+from ui import channels, data
 from ui.map_view import render_map
 
 RECENT_OPEN_DAYS = 90
@@ -44,7 +45,18 @@ def _build_display(roster: pd.DataFrame, cx: float, cy: float, radius: int, affi
     return near[near["상태"].notna()].reset_index(drop=True)
 
 
-def render_map_tab(roster: pd.DataFrame, cx: float, cy: float, radius: int) -> None:
+@st.cache_data(ttl=600, show_spinner=False)
+def _cached_display(
+    cache_key: tuple, cx: float, cy: float, radius: int, affinity_min: int, today: str
+) -> pd.DataFrame:
+    """_build_display 캐시 래퍼 — rerun(위젯 조작·다른 화면 상호작용)마다 행별
+    liquor_affinity 계산이 반복되지 않게 한다. 명부는 DataFrame 해싱을 피하려고
+    인자 대신 내부에서 로드하고, cache_key(파티션 목록)·today(신규/폐업 분류 기준일)가
+    무효화를 담당한다."""
+    return _build_display(data.load_roster(), cx, cy, radius, affinity_min)
+
+
+def render_map_tab(cx: float, cy: float, radius: int) -> None:
     ctrl_col, walk_col = st.columns([5, 1])
     with ctrl_col:
         st.slider(
@@ -56,11 +68,14 @@ def render_map_tab(roster: pd.DataFrame, cx: float, cy: float, radius: int) -> N
     only_core = st.toggle("주류 중심 업태만 (호프·주점급)", value=False, key="liquor_core_only")
     affinity_min = 2 if only_core else 1
 
-    if len(roster) == 0:
+    if len(data.load_roster()) == 0:
         st.info("이 지역은 인허가 데이터가 수집되지 않았습니다 — 지도만 표시됩니다. 담당구역으로 검색·이동하세요.")
         display = None
     else:
-        display = _build_display(roster, cx, cy, radius, affinity_min)
+        display = _cached_display(
+            moi_store.cache_token(), cx, cy, radius, affinity_min,
+            pd.Timestamp.today().strftime("%Y-%m-%d"),
+        )
 
     map_data = render_map(radius, display)
 

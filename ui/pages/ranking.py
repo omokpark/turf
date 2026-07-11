@@ -20,6 +20,7 @@ from scorers.base import available_scorers, validate_score_result
 from signals.base import AreaContext
 from signals.outlook import phase_trajectory
 from signals.registry import available_signals
+from ui import data
 from ui.components.badges import quota_signal, render_badges
 from ui.components.csv_export import neutralize_formulas
 
@@ -42,8 +43,13 @@ MARKER_COLOR = "#c0392b"
 RANK_MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 
 
-def _google_verification(top: pd.DataFrame) -> tuple[dict, list[str]]:
+@st.cache_data(ttl=3600, show_spinner=False)
+def _google_verification(shops: tuple) -> tuple[dict, list[str]]:
     """상위 후보를 구글 Places로 교차검증 — 2패스 비용 설계의 실행부.
+
+    shops: (순위인덱스, 업소ID, 상호, 도로명, 지번, 위도, 경도) 튜플들 — st.cache_data
+    키로 해시 가능해야 해서 DataFrame 대신 원시 튜플을 받는다. 캐시 덕에 rerun마다
+    30곳 × 파일 캐시 순회가 반복되지 않는다 (HTTP 자체는 places.py의 30일 캐시가 방어).
 
     상위 SNAPSHOT_TOP_N곳: 평판 스냅샷(Enterprise — 평점·리뷰수·심야영업·폐업).
     나머지 TOP_N까지: 폐업 검증만(Pro — 헛걸음 제거). place_id 검색은 무제한 무료.
@@ -54,12 +60,10 @@ def _google_verification(top: pd.DataFrame) -> tuple[dict, list[str]]:
     notes: list[str] = []
     enterprise_blocked = False
     pro_blocked = False
-    for i, (_, row) in enumerate(top.iterrows()):
-        if pd.isna(row[schema.LAT]) or pd.isna(row[schema.LON]):
-            continue
-        token = naver.address_token(row[schema.ADDR_ROAD], row[schema.ADDR_JIBUN])
+    for i, est_id, name, road, jibun, lat, lon in shops:
+        token = naver.address_token(road, jibun)
         try:
-            pid = places.find_place_id(row[schema.NAME], token, row[schema.LAT], row[schema.LON])
+            pid = places.find_place_id(name, token, lat, lon)
         except Exception:
             continue  # ID 검색 실패는 배지 없이 넘어간다
         if not pid:
@@ -79,19 +83,37 @@ def _google_verification(top: pd.DataFrame) -> tuple[dict, list[str]]:
                 pro_blocked = True
                 notes.append(str(e))
         if badges:
-            extra[row["업소ID"]] = badges
+            extra[est_id] = badges
         if enterprise_blocked and pro_blocked:
             break
     return extra, notes
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def _load_roster(cache_key: tuple) -> pd.DataFrame:
-    return moi_store.load_roster()
+def _cached_signal_results(
+    cache_key: tuple, cx: float, cy: float, radius: int, providers: tuple, today: str
+) -> dict[str, pd.DataFrame]:
+    """가용 신호 전체의 계산 결과 캐시 — rerun(위젯 조작, 이후 챗봇 메시지)마다
+    O(n²) 이웃 루프 3개와 Naver 파일 캐시 전수 순회가 반복되지 않게 한다.
+
+    명부는 DataFrame 해싱을 피하려고 인자 대신 내부에서 로드한다. 무효화 키:
+    cache_key(파티션 목록·수정시각) + 좌표·반경 + providers + today(신호가 경과일
+    기반이라 날짜가 바뀌면 재계산).
+    """
+    roster = data.load_roster()
+    area = Area(cx=cx, cy=cy, radius=radius)
+    local = filter_radius(roster.dropna(subset=[schema.LAT, schema.LON]), area)
+    ctx = AreaContext(area=area, establishments=local, rosters={"moi": local}, reference=roster)
+    results: dict[str, pd.DataFrame] = {}
+    for sig in available_signals(set(providers)):
+        result = sig.compute(ctx)
+        if len(result) > 0:
+            results[sig.id] = result
+    return results
 
 
 def render_ranking(cx: float, cy: float, radius: int) -> None:
-    roster = _load_roster(moi_store.cache_token())
+    roster = data.load_roster()
     if len(roster) == 0:
         st.info("인허가 데이터가 아직 수집되지 않았습니다. '구역 아웃룩' 탭의 안내를 참고하세요.")
         return
@@ -136,7 +158,10 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
     if "naver" in providers:
         spinner_msg = "신호 계산 중... (블로그 조회는 처음 한 번만 느리고 7일간 캐시됩니다)"
     with st.spinner(spinner_msg):
-        signal_results = {sig.id: result for sig in signals_avail if len(result := sig.compute(ctx)) > 0}
+        signal_results = _cached_signal_results(
+            moi_store.cache_token(), cx, cy, radius,
+            tuple(sorted(providers)), ctx.now.strftime("%Y-%m-%d"),
+        )
         scored = scorer.score(signal_results, ctx)
     validate_score_result(scored)
 
@@ -158,8 +183,14 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
         quota_line = quota_signal(places_quota.summary())
         if quota_line:
             st.caption(f"Google Places 월 쿼터 — {quota_line}")
+        shops = tuple(
+            (i, row["업소ID"], row[schema.NAME], row[schema.ADDR_ROAD], row[schema.ADDR_JIBUN],
+             float(row[schema.LAT]), float(row[schema.LON]))
+            for i, (_, row) in enumerate(top.iterrows())
+            if pd.notna(row[schema.LAT]) and pd.notna(row[schema.LON])
+        )
         with st.spinner("구글 Places 교차검증 중... (첫 조회만 느리고 30일간 캐시됩니다)"):
-            google_badges, quota_notes = _google_verification(top)
+            google_badges, quota_notes = _google_verification(shops)
         top["근거배지목록"] = top.apply(
             lambda r: list(r["근거배지목록"]) + google_badges.get(r["업소ID"], []), axis=1
         )
