@@ -94,3 +94,20 @@ def blog_posts_since(name: str, token: str, since: pd.Timestamp) -> tuple[int, p
         if postdate >= since:
             count += 1
     return count, latest
+
+
+def blog_post_dates(name: str, token: str) -> list[pd.Timestamp]:
+    """페이로드(최신순 최대 100건)의 게시 날짜 전체, 최신순 정렬. 토큰이 비면 빈 리스트.
+
+    blog_posts_since와 같은 쿼리·같은 파일 캐시를 쓰므로 추가 API 호출이 없다 —
+    star_level(게재 속도·증감)처럼 날짜 분포 자체가 필요한 신호용.
+    """
+    if not token:
+        return []
+    data = _search_blog_raw(f"{name} {token}")
+    dates = []
+    for item in data.get("items", []):
+        postdate = pd.to_datetime(item.get("postdate", ""), format="%Y%m%d", errors="coerce")
+        if not pd.isna(postdate):
+            dates.append(postdate)
+    return sorted(dates, reverse=True)

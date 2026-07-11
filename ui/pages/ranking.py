@@ -33,8 +33,10 @@ import signals.liquor_adjacency  # noqa: F401
 import signals.night_index  # noqa: F401
 import signals.recent_opening  # noqa: F401
 import signals.review_momentum  # noqa: F401
+import signals.star_level  # noqa: F401
 import signals.survivor  # noqa: F401
 import scorers.destination_index  # noqa: F401
+import scorers.known_star  # noqa: F401
 import scorers.weighted_sum  # noqa: F401
 
 TOP_N = 30

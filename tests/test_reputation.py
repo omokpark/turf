@@ -8,10 +8,12 @@ from core.area import Area
 from datasources import naver
 from scorers import base as scorer_base
 from scorers.destination_index import DestinationIndex
+from scorers.known_star import KnownStar
 from signals import base as signal_base
 from signals.base import AreaContext
 from signals.buzz_momentum import BuzzMomentum
 from signals.review_momentum import ReviewMomentum
+from signals.star_level import StarLevel
 from tests.conftest import make_roster
 
 TODAY = pd.Timestamp("2026-07-06")
@@ -157,3 +159,59 @@ def test_destination_index_empty_without_review_signal():
     scored = DestinationIndex().score({}, _ctx(df))
     assert len(scored) == 0
 
+# ── 알려진 스타 — 게재 속도(규모 축) 판정, 증분은 배지의 변곡 정보 ──────────────
+def test_star_level_cap_regime_uses_span_and_omits_trend(monkeypatch):
+    # 진짜 스타: 최신 100건이 50일에 몰림(API 캡) → 날짜 범위 기준 속도 100/50 = 월 60건.
+    # 직전 창은 잘려서 과소집계 — 증감 배지는 생략돼야 한다(가짜 급증 방지).
+    dates_by_name = {
+        "스타집": [TODAY] * 99 + [TODAY - pd.Timedelta(days=50)],
+        "평범집": [TODAY - pd.Timedelta(days=d) for d in (10, 60, 150)],
+        # 증감이 관측되는(float) 업소를 섞는다 — _증감 컬럼이 float dtype이 되면서
+        # 캡 업소의 None이 NaN으로 변해 "+nan%"가 새던 회귀의 재현 조건
+        "성장집": [TODAY - pd.Timedelta(days=i * 2) for i in range(40)]
+        + [TODAY - pd.Timedelta(days=95 + i * 4) for i in range(20)],
+    }
+    monkeypatch.setattr(naver, "blog_post_dates", lambda name, token: dates_by_name.get(name, []))
+    df = make_roster([{schema.NAME: "스타집"}, {schema.NAME: "평범집"}, {schema.NAME: "성장집"}])
+    ctx = _ctx(df)
+
+    result = StarLevel().compute(ctx).set_index(signal_base.EST_ID)
+    signal_base.validate_signal_result(result.reset_index())
+
+    ids = {row[schema.NAME]: row[schema.SRC_ID] for _, row in df.iterrows()}
+    star_badge = result.loc[ids["스타집"], signal_base.BADGE]
+    assert "월 60.0건" in star_badge
+    assert "직전" not in star_badge  # 캡 왜곡 — 증감 생략
+    assert "nan" not in star_badge   # None→NaN 혼입 시 "+nan%"로 새는 회귀 방지
+    assert result.loc[ids["스타집"], signal_base.RAW] == 60.0  # 건/월
+    assert pd.isna(result.loc[ids["평범집"], signal_base.BADGE])  # 상위 20% 밖
+
+    scored = KnownStar().score({"star_level": result.reset_index()}, ctx)
+    scorer_base.validate_score_result(scored)
+    assert list(scored[scorer_base.EST_ID]) == [ids["스타집"]]  # 배지(스타 판정) 업소만 랭킹
+
+
+def test_star_level_trend_badge_and_dead_star_excluded(monkeypatch):
+    # 비캡 구간: 최근 90일 20건 vs 직전 90일 10건 → +100% 증감이 배지에 병기.
+    # 죽은 스타(전부 180일 밖 게시)는 속도 0 — 배지도 랭킹도 없어야 한다.
+    surge = [TODAY - pd.Timedelta(days=i * 3) for i in range(20)]          # 0~57일 전
+    prior = [TODAY - pd.Timedelta(days=100 + i * 6) for i in range(10)]   # 100~154일 전
+    dates_by_name = {
+        "급증집": surge + prior,
+        "죽은스타": [TODAY - pd.Timedelta(days=200 + i * 5) for i in range(20)],
+    }
+    monkeypatch.setattr(naver, "blog_post_dates", lambda name, token: dates_by_name.get(name, []))
+    df = make_roster([{schema.NAME: "급증집"}, {schema.NAME: "죽은스타"}])
+    ctx = _ctx(df)
+
+    result = StarLevel().compute(ctx).set_index(signal_base.EST_ID)
+    ids = {row[schema.NAME]: row[schema.SRC_ID] for _, row in df.iterrows()}
+
+    badge = result.loc[ids["급증집"], signal_base.BADGE]
+    assert "월 5.0건" in badge          # 30건/180일 = 월 5건
+    assert "+100%" in badge             # (20-10)/10
+    assert pd.isna(result.loc[ids["죽은스타"], signal_base.BADGE])
+
+    scored = KnownStar().score({"star_level": result.reset_index()}, ctx)
+    assert ids["죽은스타"] not in set(scored[scorer_base.EST_ID])
+    assert list(scored[scorer_base.EST_ID]) == [ids["급증집"]]

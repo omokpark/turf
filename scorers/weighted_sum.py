@@ -22,6 +22,8 @@ from signals import base as signal_base
 #   업소 자체의 신호(개업 타이밍·생존)보다 낮게.
 # - night_index 0.5 (Phase 5, M7 v1): 야간 맥락 부스터. liquor_adjacency와 축이 겹치는
 #   면이 있으나(주류친화 밀도) 심야 인구 축이 추가돼 별도 유지 — 둘 다 낮은 가중으로.
+# - star_level 0.0: '알려진 스타'는 전용 스코어러(known_star)의 축 — 가중합의 신규 개업
+#   우선 정책과 섞으면 큰 계정이 타이밍 랭킹을 밀어낸다. franchise처럼 배지만 표시.
 DEFAULT_WEIGHTS = {
     "liquor_adjacency": 0.5,
     "recent_opening": 1.5,
@@ -30,6 +32,7 @@ DEFAULT_WEIGHTS = {
     "growth_momentum": 0.5,
     "conversion_vector": 0.5,
     "night_index": 0.5,
+    "star_level": 0.0,
 }
 FALLBACK_WEIGHT = 1.0
 
