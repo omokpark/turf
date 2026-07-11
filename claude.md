@@ -218,8 +218,19 @@ Day 12 후반 (Phase 6 — Places 완전판, 같은 세션에서 진행):
 - 랭킹 탭 2패스: 상위 10 평판 스냅샷 + 11~30 폐업 검증, QuotaExceeded는 등급별 우아한 생략. `.env`에 GOOGLE_PLACES_API_KEY 추가됨(Google Cloud Console에서 발급 — AI Studio 아님 주의).
 - **강남역 실측**: 상위 10곳 전부 구글 평점 배지. **3위 스시오사카 = 인허가 영업중 + 구글 폐업 → M2 헛걸음 제거 첫 실전 적중.** 지안식당 구글 5.0/82(M1 교차 확인), 다운타우너 심야영업 배지. 쿼터 무료31/Pro20/Ent10. pytest 99개 그린.
 
-▶ 다음 세션 시작점: ① 전국 스캔 완료 확인(`national_name_counts.meta.json`, 미완이면 `python -m datasources.national_names` 재실행 — 체크포인트에서 이어짐) → franchise 전국 모드 실검증(써브웨이 '전국 N곳' 배지) ② 육안 검증(목적지 지수 상위권·M3/M6 배지·아웃룩 국면 — 구글 교차검증 배지가 붙어 판단 근거 강화됨) ③ 잔여 소과제: M7 v1.1(지하철 심야 승하차), Google Cloud 콘솔 키 일일 상한 설정, 매칭 임계 튜닝.
+Day 13 (전국 스캔 CSV 전환 + 영업사원 관점 UI 3탭 전면 개편, 이번 세션에서 진행):
+- **전국 스캔 CSV 전환**: API 전국 스캔(6,700+ 호출·5시간)이 네트워크 끊김으로 3번 죽음(최대 41%) → 공공데이터포털 전국 인허가 CSV(LOCALDATA 형식 cp949, `data/permit_all.csv` 228만 행)를 `scan_from_csv()`로 30초 집계로 대체(영업중 676,390건 → 고유 상호 478,434개). 출력은 API 경로와 동일한 `national_name_counts.parquet`이라 franchise 무수정. 전국 빈도는 거의 정적이라 몇 달 1회 CSV 재수집이면 충분. API `scan()`은 폴백 유지(재시도 30회+백오프 상수화). 대형 체인 정확(김밥천국 695·투다리 443), 강남 453곳 중 체인 배지 54곳. 한계: 써브웨이·스타벅스처럼 지점명에 지역 붙는 체인 미검출(normalize 한계, 점수 미반영이라 실해 작음).
+- **타이틀 → "Sales Radar"** (page_title + 사이드바). 구 "공공API기반의 상권분석"은 창업자용 상권분석 시절 잔재.
+- **UI 5탭 → 3탭 전면 개편 (영업사원 관점)**: 지도 / 📈 구역 동향 / 🎯 방문 우선순위. 창업자용 잔재(업종 구성 탭, 업종 다중필터, 밀집도 히트맵) 제거. 전 화면이 MOI 인허가 데이터 위에서 동작(SEMAS는 provider로만 잔존, UI 미사용 — 수집 안 된 지역은 지도도 빔).
+  - **지도**: SEMAS→MOI 전환. 주류 가능 업소(liquor_affinity≥1, 토글로 ≥2 주류중심만)를 신규🟢(최근 90일)·폐업🔴(최근 180일)·영업⚪ 색으로. 업종 다중필터 삭제. (함정 수정: 최초 구현이 '영업중 아니면 전부 폐업'이라 역대 폐업 1,015곳이 다 찍힘 → 최근 폐업만 남기고 오래전 폐업은 제외.)
+  - **구역 동향** (구 아웃룩+변화 통합): 국면 차트 + 핵심지표 3개(순증 모멘텀·주류친화 전환율·신규 생존율, age_mix 제외) + 최근 신규🟢/폐업🔴 리스트. **반경 정책: 지표·국면은 선택 반경 우선, 표본<30이면 담당구역 800m 자동 확대(core.area.adaptive_area)하고 그 사실 명시**. 최근 변화 리스트는 선택 반경 기준. 주류친화 전환율 expander에 포함 업태 목록 노출(모호하다는 피드백 반영).
+  - **방문 우선순위**: 방문 리스트 CSV 내보내기 흡수(구 업종구성 탭에 있던 것).
+  - 신호등/배지: `ui/theme.py`(전역 CSS — 가로스크롤 방지·카드·배지칩), `ui/components/badges.py`(퍼센타일·신선도·쿼터 신호등, 배지칩), `ui/components/csv_export.py`(수식주입 방지). 삭제: `ui/pages/changes.py`, `ui/components/charts.py`, `ui/components/shop_table.py`.
+- 함수 시그니처 변경: `render_outlook(cx,cy,radius)`, `render_map_tab(roster,cx,cy,radius)`. `trend.recent_closings()` 신설.
+- 검증: pytest 105개 그린(신규 test_explore_map·adaptive_area·recent_closings·scan_from_csv 포함). 강남역 400m 실측 — 지도 영업402·신규8·폐업17, 앱 기동 에러 없음.
 
-아직 안 한 것: M1 완전판의 점수 결합(Enterprise 쿼터상 전 업소 조회 불가 — 유료 확장 결정 후), M7 v1.1.
+▶ 다음 세션 시작점: ① 브라우저 육안 검증(3탭 흐름, 지도 신규/폐업 마커, 구역 동향 adaptive 반경 안내, 목적지 지수·M3/M6 배지) ② 잔여 소과제: M7 v1.1(지하철 심야 승하차), Google Cloud 콘솔 키 일일 상한 설정, 매칭 임계 튜닝, 써브웨이류 체인 판별(지명 사전).
 
-Day 12까지의 변경분은 모두 커밋·푸시 완료(스캔·캐시 데이터는 data/라 gitignore). 새 PC에서는 clone/pull 후 `.env` 채우고(키 6개: data.go.kr·VWorld·NAVER 2·SEOUL·PLACES) `pip install -r requirements.txt` 하면 이어서 작업 가능.
+아직 안 한 것: M1 완전판 점수 결합(Enterprise 쿼터상 유료 확장 결정 후), M7 v1.1, 브라우저 육안 검증.
+
+Day 13까지의 변경분은 모두 커밋·푸시 완료(스캔·캐시·CSV 원본은 data/라 gitignore). 새 PC에서는 clone/pull 후 `.env` 채우고(키 6개: data.go.kr·VWorld·NAVER 2·SEOUL·PLACES) `pip install -r requirements.txt` + 전국 CSV는 `python -m datasources.national_names --csv data/permit_all.csv`, 구역 데이터는 `python -m datasources.build_index --district 3220000` 하면 이어서 작업 가능.

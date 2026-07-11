@@ -1,6 +1,7 @@
 # turf 진행 현황 요약
 
-> 최종 갱신: 2026-07-07 (Day 11 종료 시점). 상세 이력은 `claude.md` 8장, 단계별 계획·체크박스는 `docs/REDESIGN_PLAN.md` 참고.
+> 최종 갱신: 2026-07-11 (Day 13 종료 시점). 상세 이력은 `claude.md` 8장, 단계별 계획·체크박스는 `docs/REDESIGN_PLAN.md` 참고.
+> 제품명: **Sales Radar**. UI는 영업사원 관점 3탭(🗺️ 지도 / 📈 구역 동향 / 🎯 방문 우선순위)이며 전 화면이 인허가(MOI) 데이터 기반.
 
 ## 한 줄 정의
 
@@ -18,18 +19,27 @@
 | 8 | 조회 버튼 제거(완전 반응형), 원 드래그·엣지 리사이즈 UX 확정, 프리페치+로컬 필터 | ✅ |
 | 9 | **서비스 피벗**(상권 조회 → 주류 영업 인텔리전스), timeline/ 인허가 시계열 엔진 | ✅ |
 | 10 | 전면 재개정 계획(REDESIGN_PLAN.md), LOCALDATA 폐쇄 확인 → 행안부 OpenAPI 전환, 플러그인 골격(Phase 0·1), M0 구역 아웃룩(Phase 2) | ✅ |
-| 11 | 무료 업소 모델 3종+랭킹(Phase 2b), app.py 분해(Phase 3), **Naver 평판 축·M1 목적지 지수(Phase 4)** | ✅ 구현 (육안 검증 잔여) |
+| 11 | 무료 업소 모델 3종+랭킹(Phase 2b), app.py 분해(Phase 3), **Naver 평판 축·M1 목적지 지수(Phase 4)** | ✅ |
+| 12 | Phase 5(M3·M6·M7 야간지수·M4 전국 스캔) + Phase 6(Google Places 교차검증·쿼터 하드스톱) + UI 신호등/카드 리디자인 + 보안 XSS 수정 | ✅ |
+| 13 | 전국 스캔 CSV 전환(5시간→30초), **영업사원 관점 UI 5탭→3탭 전면 개편**, 제품명 Sales Radar | ✅ 구현 (브라우저 육안 검증 잔여) |
 
-## 재개정 Phase 현황 (REDESIGN_PLAN.md)
+## 재개정 Phase 현황 (REDESIGN_PLAN.md) — 전 Phase 구현 완료
 
 - **Phase 0 준비** ✅ — 행안부 인허가 OpenAPI 3종·Naver 검색 API 실호출 검증
 - **Phase 1 골격** ✅ — core/(schema·config·area), Signal/AreaIndicator/Scorer/Provider 레지스트리, moi_api·build_index, pytest 기반
-- **Phase 2 M0 구역 아웃룩** ✅ — 국면 차트(미러 막대) + 지표 카드 4종(순증·생존율·주류친화 전환·업력 구성; 공실 회복은 표본 부족으로 제외)
-- **Phase 2b 무료 업소 모델** ✅ — M2 생존자·M4 프랜차이즈·M5 주류 인접성 + recent_opening(골든타임) + 가중합 랭킹, "변화"·"방문 우선순위" 탭
-- **Phase 3 구조 정리** ✅ — app.py 573→70줄, ui/(state·sidebar·map_view·channels·components·pages), JS 격리(map_interactions.js), SEMAS Provider+파일 캐시, 골든 테스트
-- **Phase 4 Naver 평판 축** ✅ 구현 — matching/(정규화·매처), datasources/naver.py, M8 버즈 모멘텀, **M1 목적지 지수 Naver판**, 랭킹 기준 선택 UI
-- **Phase 5 확장 모델** ⬜ — M3 성장 모멘텀, M6 업종 전환 벡터, M7 야간 상권 지수, 증분 갱신, M4 전국 스캔
-- **Phase 6 Places 완전판** ⬜ — M1 완전판·심야영업·폐업 교차검증 (결제 등록 필요, 투입 여부는 M1 Naver판 검증 후 결정)
+- **Phase 2 M0 구역 아웃룩** ✅ — 국면 차트 + 핵심지표(순증·생존율·주류친화 전환; 업력구성·공실회복 제외)
+- **Phase 2b 무료 업소 모델** ✅ — M2 생존자·M4 프랜차이즈·M5 주류 인접성 + recent_opening(골든타임) + 가중합 랭킹
+- **Phase 3 구조 정리** ✅ — app.py 얇은 진입점, ui/ 분해, JS 격리, Provider+파일 캐시, 골든 테스트
+- **Phase 4 Naver 평판 축** ✅ — matching/, datasources/naver.py, M8 버즈, **M1 목적지 지수 Naver판**
+- **Phase 5 확장 모델** ✅ — M3 성장 모멘텀, M6 업종 전환 벡터, **M7 야간 상권 지수 v1**(서울 생활인구), M4 전국 스캔(CSV 전환, 478,434 상호). 잔여: M7 v1.1 지하철 심야 승하차
+- **Phase 6 Places 완전판** ✅ — 쿼터 원장(무료 90% 하드스톱), 2패스 교차검증(폐업 Pro·평판 Enterprise), 스시오사카 폐업 적중. 잔여: M1 점수 결합(유료 확장 결정 후)
+
+## UI 구조 (Day 13 개편 — 영업사원 관점 3탭, 전 화면 MOI 인허가 기반)
+
+- **🗺️ 지도**: 주류 가능 업소(liquor_affinity≥1, 토글로 ≥2)를 신규🟢·폐업🔴·영업⚪ 색으로. 중심·반경은 원 드래그/엣지 리사이즈. 업종 다중필터·히트맵 제거.
+- **📈 구역 동향** (구 아웃룩+변화 통합): 국면 차트 + 핵심지표 3개 + 최근 신규/폐업. 지표·국면은 선택 반경 우선·표본<30이면 800m 자동 확대(adaptive_area), 최근 변화는 선택 반경.
+- **🎯 방문 우선순위**: 스코어러 랭킹 카드(메달·점수바·근거 배지) + 구글 교차검증 배지 + 쿼터 신호등 + 방문 리스트 CSV.
+- 신호등 규약: 🔴🟠🟡⚪ = 좋다/나쁘다가 아니라 **수집 구역 내 통계적 두드러짐/신선도/쿼터 잔여**.
 
 ## 랭킹 정책 (사용자 피드백으로 확정)
 

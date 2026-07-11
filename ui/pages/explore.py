@@ -1,75 +1,77 @@
-"""탐색 페이지 — 지도 탭(밀집도·분포 + 중심·반경 조작) + 업종 구성 탭(스냅샷 집계)"""
+"""지도 탭 — 주류 가능 업소를 신규🟢·폐업🔴·영업⚪ 색으로, 중심·반경은 지도에서 조작
 
+인허가(MOI) 데이터 기반. 업종 다중필터는 제거하고(영업사원은 술 팔 가능성 있는 곳
+전부가 대상), liquor_affinity 임계 토글(전체 주류가능 ≥1 / 주류 중심 ≥2)만 둔다.
+수집 안 된 지역은 마커 없이 지도만 나오며, 검색·드래그로 담당구역으로 이동해 쓴다.
+"""
+
+import pandas as pd
 import streamlit as st
 
 from core import schema
-from core.area import MAX_RADIUS_M, MIN_RADIUS_M, walk_minutes
-from presenter.report import generate_report
+from core.area import Area, MAX_RADIUS_M, MIN_RADIUS_M, filter_radius, walk_minutes
+from signals.outlook import liquor_affinity
+from timeline import trend
 from ui import channels
-from ui.components.charts import category_bar_chart
-from ui.components.shop_table import render_shop_table
 from ui.map_view import render_map
 
+RECENT_OPEN_DAYS = 90
+RECENT_CLOSE_DAYS = 180
 
-def render_map_tab(radius: int, analysis: dict, selected_categories: list[str], category_colors: dict) -> None:
-    # 반경 컨트롤은 피드백(원 크기)이 보이는 지도 바로 위에 둔다. 원 가장자리 드래그와 동일한 값을 공유.
-    slider_col, walk_col = st.columns([5, 1])
-    with slider_col:
+
+def _build_display(roster: pd.DataFrame, cx: float, cy: float, radius: int, affinity_min: int) -> pd.DataFrame:
+    """선택 반경 내 주류 가능 업소 + 상태(신규/폐업/영업) 컬럼을 붙여 돌려준다."""
+    geo = roster.dropna(subset=[schema.LAT, schema.LON])
+    near = filter_radius(geo, Area(cx=cx, cy=cy, radius=radius))
+    if len(near) == 0:
+        return near.assign(상태=pd.Series(dtype=str))
+
+    affinity = near.apply(lambda r: liquor_affinity(r[schema.CAT_S], r[schema.NAME]), axis=1)
+    near = near[affinity >= affinity_min].copy()
+    if len(near) == 0:
+        return near.assign(상태=pd.Series(dtype=str))
+
+    recent_open_ids = set(trend.recent_openings(near, days=RECENT_OPEN_DAYS)[schema.SRC_ID])
+    recent_close_ids = set(trend.recent_closings(near, days=RECENT_CLOSE_DAYS)[schema.SRC_ID])
+
+    def status(row):
+        # 최근 폐업만 🔴로 표시하고, 오래전 폐업은 아예 지도에서 뺀다(노이즈 방지).
+        if row[schema.IS_OPEN]:
+            return "신규" if row[schema.SRC_ID] in recent_open_ids else "영업"
+        return "폐업" if row[schema.SRC_ID] in recent_close_ids else None
+
+    near["상태"] = near.apply(status, axis=1)
+    return near[near["상태"].notna()].reset_index(drop=True)
+
+
+def render_map_tab(roster: pd.DataFrame, cx: float, cy: float, radius: int) -> None:
+    ctrl_col, walk_col = st.columns([5, 1])
+    with ctrl_col:
         st.slider(
-            "반경 (m)",
-            min_value=MIN_RADIUS_M,
-            max_value=MAX_RADIUS_M,
-            step=50,
-            key="radius_slider",
-            label_visibility="collapsed",
+            "반경 (m)", min_value=MIN_RADIUS_M, max_value=MAX_RADIUS_M, step=50,
+            key="radius_slider", label_visibility="collapsed",
         )
     walk_col.markdown(f"**{radius}m** · 도보 {walk_minutes(radius)}분")
 
-    map_data = render_map(radius, analysis, selected_categories, category_colors)
+    only_core = st.toggle("주류 중심 업태만 (호프·주점급)", value=False, key="liquor_core_only")
+    affinity_min = 2 if only_core else 1
 
-    st.caption(
-        f"📍 중심: 위도 {st.session_state.cy:.5f}, 경도 {st.session_state.cx:.5f} · "
-        f"반경 {radius}m (도보 약 {walk_minutes(radius)}분)"
-    )
+    if len(roster) == 0:
+        st.info("이 지역은 인허가 데이터가 수집되지 않았습니다 — 지도만 표시됩니다. 담당구역으로 검색·이동하세요.")
+        display = None
+    else:
+        display = _build_display(roster, cx, cy, radius, affinity_min)
+
+    map_data = render_map(radius, display)
+
+    if display is not None:
+        n_new = int((display["상태"] == "신규").sum())
+        n_close = int((display["상태"] == "폐업").sum())
+        st.caption(
+            f"주류 가능 업소 {int((display['상태'] != '폐업').sum()):,}곳 · "
+            f"🟢 최근 {RECENT_OPEN_DAYS}일 신규 {n_new} · 🔴 최근 {RECENT_CLOSE_DAYS}일 폐업 {n_close}"
+        )
     st.caption("🎯 원 끌기 = 중심 이동  ·  ↔️ 가장자리 끌기 = 반경 조절  ·  📌 원 밖 클릭 = 점프  ·  🧭 지도 끌기/줌 = 탐색")
 
     channels.apply_radius_message(map_data)
     channels.apply_center_click(map_data)
-
-
-def render_stats_tab(radius: int, analysis: dict, selected_categories: list[str], category_colors: dict) -> None:
-    if analysis["total"] == 0:
-        st.info("반경 내 음식점이 없습니다. 위치나 반경을 바꿔보세요.")
-        return
-
-    by_category = analysis["by_category"]
-    st.caption(
-        f"조회 위치: 위도 {st.session_state.cy:.5f}, 경도 {st.session_state.cx:.5f} · "
-        f"반경 {radius}m (도보 약 {walk_minutes(radius)}분)"
-    )
-
-    st.metric("총 음식점", f"{analysis['total']}곳")
-    for cat in selected_categories:
-        match = by_category[by_category[schema.CAT_S] == cat]
-        cols = st.columns(3)
-        cols[0].markdown(f"**{cat}**")
-        row = match.iloc[0]
-        cols[1].metric("개수", f"{int(row['개수'])}곳", f"{match.index[0] + 1}위", delta_color="off")
-        cols[2].metric("비중", f"{row['비율']}%", delta_color="off")
-
-    st.markdown("**📊 업종별 개수·비율** (반경 내, 많은 순)")
-    chart, chart_height = category_bar_chart(by_category, category_colors)
-    if chart_height > 480:
-        st.caption("전체 업종을 보려면 아래 차트를 스크롤하세요.")
-    with st.container(height=480):
-        st.altair_chart(chart, use_container_width=True)
-
-    render_shop_table(analysis["food_df"], selected_categories)
-
-    report_text = generate_report(analysis, radius, None)
-    for cat in selected_categories:
-        match = by_category[by_category[schema.CAT_S] == cat]
-        row = match.iloc[0]
-        report_text += f"\n★ 내 업종({cat}): {int(row['개수'])}곳, {match.index[0] + 1}위, {row['비율']}% 차지"
-    with st.expander("원본 리포트 텍스트"):
-        st.text(report_text)

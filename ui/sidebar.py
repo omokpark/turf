@@ -65,37 +65,13 @@ def _render_address_search() -> None:
     st.caption("정확한 위치·반경은 지도에서 — 파란 원을 끌면 중심이, 원 가장자리를 끌면 반경이 바뀝니다.")
 
 
-def _render_category_filter(analysis: dict) -> list[str]:
-    from core import schema
-
-    st.markdown("**🍽️ 업종 필터** — 선택한 업종만 지도 마커·업소 목록에 표시 (비우면 전체 집계)")
-    if analysis["total"] == 0:
-        st.caption("반경 내 음식점이 없어 선택할 업종이 없습니다.")
-        return []
-
-    by_category = analysis["by_category"]
-    options = by_category[schema.CAT_S].tolist()  # 이미 개수 많은 순 정렬
-    counts = by_category.set_index(schema.CAT_S)["개수"]
-    # 위치·반경이 바뀌어 현재 결과에 없는 업종이 필터에 남아 있으면 제거 (multiselect 생성 전에 정리)
-    if st.session_state.get("filter_categories"):
-        st.session_state.filter_categories = [c for c in st.session_state.filter_categories if c in options]
-    return st.multiselect(
-        "업종 필터",
-        options,
-        key="filter_categories",
-        format_func=lambda c: f"{c} ({counts[c]}곳)",
-        label_visibility="collapsed",
-    )
-
-
-def render_sidebar(analysis: dict) -> list[str]:
-    """사이드바 전체를 그리고 선택된 업종 필터를 돌려준다."""
+def render_sidebar() -> None:
+    """사이드바 — 검색·위치 초기화. (업종 필터는 영업사원 관점에서 불필요해 제거,
+    지도가 주류 가능 업소를 전부 보여준다.)"""
     with st.sidebar:
         st.title("🍶 Sales Radar")
         _render_address_search()
-        selected_categories = _render_category_filter(analysis)
         if st.button("↩️ 초기 위치(강남역)로"):
             move_to(*GANGNAM_STATION)
             st.session_state.radius_slider = DEFAULT_RADIUS_M
             st.rerun()
-    return selected_categories

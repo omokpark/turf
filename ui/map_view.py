@@ -1,5 +1,10 @@
 """본문 지도 뷰 — folium 지도 구성 + st_folium 호출
 
+지도는 인허가(MOI) 데이터 위에서 돈다 (SEMAS 실시간 스냅샷은 개폐업 이력이 없어
+신규·폐업을 못 그린다). 표시 대상은 '주류 가능 업소'(liquor_affinity≥임계)이고,
+최근 개업🟢·폐업🔴·그 외 영업중⚪을 색으로 구분한다 — 영업사원이 "뭐가 새로 생겼고
+뭐가 빠졌나"를 지도에서 바로 읽게 하기 위함.
+
 지도는 표시 전용이고(팬·줌 = 순수 탐색), 분석 중심·반경 조작은 원/핀 드래그와
 지도 클릭으로 한다. 그 상호작용 JS는 ui/map_interactions.js에 격리되어 있으며
 여기서 string.Template로 반경 한계만 주입한다. 반환값 해석은 ui/channels.py.
@@ -11,14 +16,17 @@ from string import Template
 
 import folium
 import streamlit as st
-from folium.plugins import HeatMap, MarkerCluster
+from folium.plugins import MarkerCluster
 from streamlit_folium import st_folium
 
 from core import config, schema
 from core.area import MAX_RADIUS_M, MIN_RADIUS_M, zoom_for_radius
-from ui.state import CENTER_COLOR, CLUSTER_THRESHOLD, CROSSHAIR_HTML, NEUTRAL_COLOR
+from ui.state import CENTER_COLOR, CLUSTER_THRESHOLD, CROSSHAIR_HTML
 
 _INTERACTIONS_TEMPLATE = Template((Path(__file__).parent / "map_interactions.js").read_text(encoding="utf-8"))
+
+# 업소 상태별 색 (구역 동향·dataviz 검증 팔레트와 통일)
+STATUS_COLOR = {"신규": "#1a7f5c", "폐업": "#b3541e", "영업": "#5b6670"}
 
 
 def _base_map(radius: int) -> folium.Map:
@@ -65,58 +73,51 @@ def _add_center_controls(m: folium.Map, radius: int) -> None:
     )
 
 
-def _add_shop_layers(m: folium.Map, analysis: dict, selected_categories: list[str], category_colors: dict) -> None:
-    food_df = analysis["food_df"]
+def _add_shop_layers(m: folium.Map, display_df) -> None:
+    """주류 가능 업소 마커 — 상태(신규🟢/폐업🔴/영업⚪)별 색. display_df 컬럼:
+    NAME, CAT_S, LAT, LON, 상태."""
+    if len(display_df) > CLUSTER_THRESHOLD:
+        layer = MarkerCluster(name="업소", maxClusterRadius=40, disableClusteringAtZoom=18).add_to(m)
+    else:
+        layer = folium.FeatureGroup(name="업소").add_to(m)
+    for _, row in display_df.iterrows():
+        status = row["상태"]
+        shop_name = html.escape(str(row[schema.NAME]))
+        shop_cat = html.escape(str(row[schema.CAT_S]))
+        folium.CircleMarker(
+            location=[row[schema.LAT], row[schema.LON]],
+            radius=6,
+            color=STATUS_COLOR.get(status, STATUS_COLOR["영업"]),
+            fill=True,
+            fill_opacity=0.85,
+            tooltip=folium.Tooltip(shop_name, permanent=False, direction="top", sticky=False),
+            popup=folium.Popup(f"<b>{shop_name}</b><br>{shop_cat} · {html.escape(status)}", max_width=220),
+        ).add_to(layer)
 
-    # 전체 음식점 밀집도 히트맵 — 상권의 '뜨거운 정도'를 한눈에
-    heat_group = folium.FeatureGroup(name="전체 음식점 밀집도").add_to(m)
-    HeatMap(food_df[[schema.LAT, schema.LON]].values.tolist(), radius=22, blur=18, min_opacity=0.3).add_to(heat_group)
-
-    my_shops = food_df[food_df[schema.CAT_S].isin(selected_categories)]
-    if not my_shops.empty:
-        if len(my_shops) > CLUSTER_THRESHOLD:
-            layer = MarkerCluster(name="선택 업종", maxClusterRadius=40, disableClusteringAtZoom=18).add_to(m)
-        else:
-            layer = folium.FeatureGroup(name="선택 업종").add_to(m)
-        for _, row in my_shops.iterrows():
-            shop_name = html.escape(str(row[schema.NAME]))
-            shop_category = html.escape(str(row[schema.CAT_S]))
-            folium.CircleMarker(
-                location=[row[schema.LAT], row[schema.LON]],
-                radius=6,
-                color=category_colors.get(row[schema.CAT_S], NEUTRAL_COLOR),
-                fill=True,
-                fill_opacity=0.85,
-                tooltip=folium.Tooltip(shop_name, permanent=False, direction="top", sticky=False),
-                popup=folium.Popup(f"<b>{shop_name}</b><br>{shop_category}", max_width=220),
-            ).add_to(layer)
-
-    folium.LayerControl(collapsed=True).add_to(m)
-
-    if len(selected_categories) > 1:
-        legend_rows = "".join(
-            f'<div style="display:flex;align-items:center;gap:6px;margin:2px 0;">'
-            f'<span style="width:10px;height:10px;border-radius:50%;background:{category_colors[c]};'
-            f'display:inline-block;"></span><span>{html.escape(c)}</span></div>'
-            for c in selected_categories
+    # 범례 — 상태별 색 안내
+    legend_rows = "".join(
+        f'<div style="display:flex;align-items:center;gap:6px;margin:2px 0;">'
+        f'<span style="width:10px;height:10px;border-radius:50%;background:{STATUS_COLOR[s]};'
+        f'display:inline-block;"></span><span>{s}</span></div>'
+        for s in ("신규", "폐업", "영업")
+    )
+    m.get_root().html.add_child(
+        folium.Element(
+            f"""
+            <div style="position:fixed; bottom:24px; right:12px; z-index:1000;
+                        background:rgba(255,255,255,0.9); border:1px solid #ccc; border-radius:6px;
+                        padding:8px 10px; font-size:12px; pointer-events:none;">
+            {legend_rows}
+            </div>
+            """
         )
-        m.get_root().html.add_child(
-            folium.Element(
-                f"""
-                <div style="position:fixed; bottom:24px; right:12px; z-index:1000;
-                            background:rgba(255,255,255,0.9); border:1px solid #ccc; border-radius:6px;
-                            padding:8px 10px; font-size:12px; pointer-events:none;">
-                {legend_rows}
-                </div>
-                """
-            )
-        )
+    )
 
 
-def render_map(radius: int, analysis: dict, selected_categories: list[str], category_colors: dict) -> dict:
-    """지도를 그리고 st_folium 반환값(map_data)을 돌려준다."""
+def render_map(radius: int, display_df) -> dict:
+    """지도를 그리고 st_folium 반환값(map_data)을 돌려준다. display_df가 비면 마커 없이 지도만."""
     m = _base_map(radius)
     _add_center_controls(m, radius)
-    if analysis["total"] > 0:
-        _add_shop_layers(m, analysis, selected_categories, category_colors)
+    if display_df is not None and len(display_df) > 0:
+        _add_shop_layers(m, display_df)
     return st_folium(m, height=560, use_container_width=True, key="main_map")

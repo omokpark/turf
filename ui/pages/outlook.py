@@ -1,7 +1,11 @@
-"""M0 구역 아웃룩 탭 — 국면 매트릭스 + 지표 카드 5개
+"""구역 동향 탭 — 국면 + 핵심지표 + 최근 신규·폐업 (구 아웃룩 + 변화 통합)
 
-읽는 순서 그대로 배치한다: ① 이 구역은 지금 어떤 국면인가(매트릭스)
-→ ② 왜 그런가(지표 카드·시계열). 모든 문구는 관측 사실만 (판단 원칙).
+읽는 순서: ① 이 구역은 지금 어떤 국면인가(국면 차트) → ② 왜 그런가(핵심지표) →
+③ 지금 뭐가 바뀌고 있나(최근 신규🟢·폐업🔴). 모든 문구는 관측 사실만 (판단 원칙).
+
+반경 정책: 지표·국면은 표본이 얇으면 요동치므로 선택 반경 우선 + 부족 시 담당구역
+(800m) 자동 확대(core.area.adaptive_area). 최근 신규·폐업 리스트는 '지금 내 발밑'을
+보는 것이라 선택 반경 그대로 쓴다.
 """
 
 import altair as alt
@@ -9,20 +13,20 @@ import pandas as pd
 import streamlit as st
 
 from core import schema
-from core.area import Area, OUTLOOK_RADIUS_M, filter_radius
+from core.area import Area, adaptive_area, filter_radius
 from datasources import moi_store
 from signals.base import AreaContext
-from signals.outlook import phase_trajectory
+from signals.outlook import LIQUOR_CATS, LIQUOR_NAME_KEYWORDS, phase_trajectory
 from signals.registry import available_indicators
+from timeline import trend
 from ui.components.badges import freshness_signal, percentile_signal
 
-# 지표 모듈 import = 레지스트리 등록 (파일 1개 추가 = 카드 1장 추가)
-import signals.age_mix  # noqa: F401
+# 지표 모듈 import = 레지스트리 등록 (파일 1개 추가 = 카드 1장 추가).
+# 영업사원 관점 핵심지표만 유지: 순증 모멘텀·주류친화 전환율·신규 생존율.
+# age_mix(업력 구성)는 영업 판단에 약해 제외(2026-07-11), vacancy_recovery는 표본 편차로 제외.
 import signals.cohort_survival  # noqa: F401
 import signals.liquor_shift  # noqa: F401
 import signals.net_momentum  # noqa: F401
-# vacancy_recovery(공실 회복 속도)는 제외 — 연도별 재입점 표본이 적어 중앙값 편차가
-# 너무 큼 (2026-07-06 사용자 결정). 주소키가 건물 단위로 정교해지는 Phase 5에서 재평가.
 
 # 색: dataviz 검증 통과 쌍 (CVD ΔE 27.6) — 개업=녹색, 폐업=주황. #c0392b는 '주목' 전용.
 COLOR_OPEN = "#1a7f5c"
@@ -30,7 +34,9 @@ COLOR_CLOSE = "#b3541e"
 COLOR_ACCENT = "#c0392b"
 COLOR_MUTED = "#9aa5a0"
 
-MIN_SAMPLE = 30  # 이보다 적으면 지표가 노이즈 — 계산하지 않고 이유를 밝힌다
+MIN_SAMPLE = 30  # 이보다 적으면 지표가 노이즈 — adaptive_area가 800m로 넓히는 임계
+RECENT_DAYS = 90        # 최근 신규
+RECENT_CLOSE_DAYS = 180  # 최근 폐업 — 폐업 신고 지연을 감안해 더 넓게 본다
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -39,7 +45,7 @@ def _load_roster(cache_key: tuple) -> pd.DataFrame:
     return moi_store.load_roster()
 
 
-def render_outlook(cx: float, cy: float) -> None:
+def render_outlook(cx: float, cy: float, radius: int) -> None:
     freshness = moi_store.freshness()
     roster = _load_roster(moi_store.cache_token())
 
@@ -50,24 +56,31 @@ def render_outlook(cx: float, cy: float) -> None:
         )
         return
 
-    area = Area(cx=cx, cy=cy, radius=OUTLOOK_RADIUS_M)
-    local = filter_radius(roster.dropna(subset=[schema.LAT, schema.LON]), area)
+    geo = roster.dropna(subset=[schema.LAT, schema.LON])
+    # 지표·국면: 선택 반경 우선, 표본 부족 시 담당구역(800m)으로 자동 확대
+    local, eff_radius, widened = adaptive_area(geo, cx, cy, radius, min_sample=MIN_SAMPLE)
+    # 최근 신규·폐업 리스트: '지금 내 발밑'이라 선택 반경 그대로
+    near = filter_radius(geo, Area(cx=cx, cy=cy, radius=radius))
 
-    summary = moi_store.cached_summary()
-    st.caption(
-        f"기준: 중심 반경 {OUTLOOK_RADIUS_M}m · 인허가 이력 {len(local):,}건 "
-        f"(보유 데이터: {', '.join(summary['업종'] + ' ' + summary['행수'].map('{:,}'.format) + '건')}) · "
-        f"폐업 신고는 실제보다 수개월 늦게 반영될 수 있음"
-    )
-    st.caption(freshness_signal(freshness))
+    st.caption(freshness_signal(freshness) + " · 폐업 신고는 실제보다 수개월 늦게 반영될 수 있음")
 
     if len(local) < MIN_SAMPLE:
         st.warning(
-            f"반경 {OUTLOOK_RADIUS_M}m 내 인허가 이력이 {len(local)}건뿐이라 구역 지표를 계산하지 않습니다 "
+            f"반경 {eff_radius}m 내 인허가 이력이 {len(local)}건뿐이라 구역 지표를 계산하지 않습니다 "
             f"(최소 {MIN_SAMPLE}건). 수집된 자치단체 안쪽으로 지도를 이동해 보세요."
         )
+        _render_recent_lists(near, radius)
         return
 
+    if widened:
+        st.info(
+            f"선택 반경 {radius}m는 이력이 얇아 **담당구역 {eff_radius}m 기준**으로 국면·지표를 계산합니다 "
+            f"(반경 내 이력 {len(local):,}건). 최근 신규·폐업 리스트는 선택 반경 {radius}m 기준입니다."
+        )
+    else:
+        st.caption(f"국면·지표 기준: 반경 {eff_radius}m · 인허가 이력 {len(local):,}건")
+
+    area = Area(cx=cx, cy=cy, radius=eff_radius)
     ctx = AreaContext(area=area, establishments=local, rosters={"moi": local}, reference=roster)
 
     st.markdown(
@@ -77,6 +90,52 @@ def render_outlook(cx: float, cy: float) -> None:
     _render_phase_matrix(local, ctx)
     st.divider()
     _render_indicator_cards(ctx)
+    st.divider()
+    _render_recent_lists(near, radius)
+
+
+# ── ③ 최근 신규·폐업 (변화 탭 통합) ────────────────────────────────────────────
+def _render_recent_lists(near: pd.DataFrame, radius: int) -> None:
+    st.markdown(f"#### 🔄 최근 변화 (선택 반경 {radius}m)")
+    if len(near) == 0:
+        st.caption("선택 반경 내 인허가 이력이 없습니다.")
+        return
+
+    open_col, close_col = st.columns(2)
+    with open_col:
+        st.markdown(f"**🟢 최근 개업** (최근 {RECENT_DAYS}일 · 방문 골든타임)")
+        recent = trend.recent_openings(near, days=RECENT_DAYS)
+        if len(recent) == 0:
+            st.caption("최근 개업 건이 없습니다.")
+        else:
+            st.dataframe(
+                recent[[schema.NAME, schema.CAT_S, "개업경과일"]].rename(
+                    columns={schema.NAME: "상호", schema.CAT_S: "업태", "개업경과일": "경과일"}
+                ),
+                width="stretch", hide_index=True,
+                column_config={
+                    "상호": st.column_config.TextColumn(width="medium"),
+                    "업태": st.column_config.TextColumn(width="small"),
+                    "경과일": st.column_config.NumberColumn(width="small"),
+                },
+            )
+    with close_col:
+        st.markdown(f"**🔴 최근 폐업** (최근 {RECENT_CLOSE_DAYS}일 · 자리 회전 예고)")
+        closed = trend.recent_closings(near, days=RECENT_CLOSE_DAYS)
+        if len(closed) == 0:
+            st.caption("최근 폐업 건이 없습니다.")
+        else:
+            st.dataframe(
+                closed[[schema.NAME, schema.CAT_S, "폐업경과일"]].rename(
+                    columns={schema.NAME: "상호", schema.CAT_S: "업태", "폐업경과일": "경과일"}
+                ),
+                width="stretch", hide_index=True,
+                column_config={
+                    "상호": st.column_config.TextColumn(width="medium"),
+                    "업태": st.column_config.TextColumn(width="small"),
+                    "경과일": st.column_config.NumberColumn(width="small"),
+                },
+            )
 
 
 # ── ① 국면 흐름 (미러 막대) ──────────────────────────────────────────────────
@@ -170,6 +229,12 @@ def _render_indicator_cards(ctx: AreaContext) -> None:
     for ind, res in results:
         with st.expander(f"{ind.label} — 근거·추이"):
             st.write(res.fact)
+            if ind.id == "liquor_shift":
+                # '주류친화 전환율'이 모호하다는 피드백(2026-07-11) — 어떤 업태가 포함되는지 노출
+                st.caption(
+                    "**주류친화 업태**: " + ", ".join(sorted(LIQUOR_CATS))
+                    + " + 상호에 " + "·".join(LIQUOR_NAME_KEYWORDS) + " 포함"
+                )
             if res.series is not None and len(res.series) > 0:
                 st.altair_chart(_series_chart(ind.id, res.series), width="stretch")
 

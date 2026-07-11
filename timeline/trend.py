@@ -47,6 +47,19 @@ def recent_openings(df: pd.DataFrame, days: int = 90, today: pd.Timestamp | None
     return out.sort_values("인허가일자", ascending=False).reset_index(drop=True)
 
 
+def recent_closings(df: pd.DataFrame, days: int = 90, today: pd.Timestamp | None = None) -> pd.DataFrame:
+    """최근 N일 내 폐업한 업소 — 거래처 이탈·자리 회전 예고 신호.
+
+    폐업 신고는 실제보다 수개월 늦게 반영될 수 있어(공공데이터 특성) days는 넉넉히 본다.
+    """
+    today = today or pd.Timestamp.today()
+    cutoff = today - pd.Timedelta(days=days)
+    closed = df["폐업일자"].notna() & (df["폐업일자"] >= cutoff)
+    out = df[closed].copy()
+    out["폐업경과일"] = (today - out["폐업일자"]).dt.days
+    return out.sort_values("폐업일자", ascending=False).reset_index(drop=True)
+
+
 def site_turnover(df: pd.DataFrame) -> pd.DataFrame:
     """자리 회전 신호: 같은 주소에서 폐업 이력이 있고, 현재 영업 중인 업소가 들어온 자리.
 

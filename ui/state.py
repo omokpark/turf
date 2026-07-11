@@ -58,5 +58,5 @@ def notify_reanalysis(total: int, radius: int) -> None:
     if st.session_state.get("last_analysis_key") != analysis_key:
         if "last_analysis_key" in st.session_state:
             where = f"'{moved_address}' 기준 " if moved_address else ""
-            st.toast(f"{where}재분석 완료 — 반경 {radius}m 내 음식점 {total}곳", icon="📍")
+            st.toast(f"{where}재분석 완료 — 반경 {radius}m 내 영업중 업소 {total}곳", icon="📍")
         st.session_state.last_analysis_key = analysis_key

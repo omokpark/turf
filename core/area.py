@@ -63,6 +63,23 @@ def filter_radius(df: pd.DataFrame, area: Area) -> pd.DataFrame:
     return df[(dx * dx + dy * dy) <= area.radius * area.radius].reset_index(drop=True)
 
 
+def adaptive_area(
+    df: pd.DataFrame, cx: float, cy: float, selected_radius: int,
+    min_sample: int, fallback_radius: int = OUTLOOK_RADIUS_M,
+) -> tuple[pd.DataFrame, int, bool]:
+    """선택 반경 우선, 표본 부족 시 담당구역(fallback_radius)으로 자동 확대.
+
+    구역 동향 지표는 인허가 이력이 충분해야 안정적인데, 도보 반경(≤400m)에선 표본이
+    얇은 경우가 많다. 선택 반경으로 먼저 잘라 min_sample 이상이면 그대로 쓰고, 모자라면
+    넓혀서 다시 자른다. 반환: (필터된 df, 실제 사용 반경, 확대되었는가).
+    """
+    local = filter_radius(df, Area(cx=cx, cy=cy, radius=selected_radius))
+    if len(local) >= min_sample or selected_radius >= fallback_radius:
+        return local, selected_radius, False
+    widened = filter_radius(df, Area(cx=cx, cy=cy, radius=fallback_radius))
+    return widened, fallback_radius, True
+
+
 def within_radius(shops: list[dict], area: Area) -> list[dict]:
     """list[dict] 버전 반경 필터 (app.py의 _within_radius와 동일 동작)."""
     mdl = meters_per_deg_lon(area.cy)

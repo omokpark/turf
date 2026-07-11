@@ -9,6 +9,7 @@ from core import schema
 from timeline.trend import (
     business_age,
     filter_radius,
+    recent_closings,
     recent_openings,
     site_turnover,
     yearly_trend,
@@ -41,6 +42,17 @@ def test_recent_openings_golden_time(gangnam_roster, today):
     # 최신 개업이 먼저
     assert names[0] == "좌표없는신규"
     assert (out["개업경과일"] >= 0).all()
+
+
+def test_recent_closings(gangnam_roster, today):
+    # 작년폐업(2025-08-01)은 today(2026-07-06) 기준 약 340일 전 — days를 넉넉히 줘야 잡힘
+    out = recent_closings(gangnam_roster, days=400, today=today)
+    names = list(out[schema.NAME])
+    assert "작년폐업" in names
+    assert "신상집" not in names  # 영업중 업소는 제외
+    assert (out["폐업경과일"] >= 0).all()
+    # 최근 폐업 90일로 좁히면 작년폐업은 빠진다
+    assert len(recent_closings(gangnam_roster, days=90, today=today)) == 0
 
 
 def test_site_turnover_counts_closures_at_same_address(gangnam_roster):

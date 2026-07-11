@@ -21,6 +21,7 @@ from signals.base import AreaContext
 from signals.outlook import phase_trajectory
 from signals.registry import available_signals
 from ui.components.badges import quota_signal, render_badges
+from ui.components.csv_export import neutralize_formulas
 
 # 신호·스코어러 모듈 import = 레지스트리 등록 (파일 1개 추가 = 랭킹에 자동 반영)
 import signals.buzz_momentum  # noqa: F401
@@ -182,6 +183,17 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
                 score = min(1.0, max(0.0, float(row["점수"])))
                 st.progress(score, text=f"{score:.2f}")
             render_badges(row["근거배지목록"])
+
+    # 방문 리스트 CSV — 상위 N곳 + 근거 (업종 구성 탭에 있던 내보내기를 여기로 흡수)
+    export = top[["순위", schema.NAME, schema.CAT_S, schema.ADDR_ROAD, "점수", "근거"]].rename(
+        columns={schema.NAME: "상호", schema.CAT_S: "업태", schema.ADDR_ROAD: "주소"}
+    )
+    st.download_button(
+        "⬇️ 방문 리스트 CSV 다운로드",
+        neutralize_formulas(export).to_csv(index=False).encode("utf-8-sig"),
+        file_name="turf_방문우선순위.csv",
+        mime="text/csv",
+    )
 
     st.divider()
     st.markdown("#### 🗺️ 지도")

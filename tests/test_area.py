@@ -5,6 +5,7 @@ import pandas as pd
 from core import schema
 from core.area import (
     Area,
+    adaptive_area,
     filter_radius,
     snap_to_grid,
     walk_minutes,
@@ -20,6 +21,23 @@ def test_filter_radius_keeps_inside_drops_outside(gangnam_roster):
     names = set(out[schema.NAME])
     assert "반경밖" not in names
     assert "장수집" in names
+
+
+def test_adaptive_area_keeps_selection_when_sample_enough(gangnam_roster):
+    df = gangnam_roster.dropna(subset=[schema.LAT])
+    # min_sample=1이면 300m 안에 이미 충분 → 확대 안 함
+    local, radius, widened = adaptive_area(df, cx=127.0276, cy=37.4979, selected_radius=300, min_sample=1)
+    assert radius == 300 and widened is False
+
+
+def test_adaptive_area_widens_when_sample_thin(gangnam_roster):
+    df = gangnam_roster.dropna(subset=[schema.LAT])
+    # min_sample을 크게 잡아 300m로는 부족하게 만들면 800m로 확대
+    local, radius, widened = adaptive_area(
+        df, cx=127.0276, cy=37.4979, selected_radius=300, min_sample=999, fallback_radius=800
+    )
+    assert radius == 800 and widened is True
+    assert len(local) >= len(filter_radius(df, Area(cx=127.0276, cy=37.4979, radius=300)))
 
 
 def test_filter_radius_matches_haversine_scale(gangnam_roster):
