@@ -42,6 +42,21 @@ def _density_decile(df: pd.DataFrame) -> pd.Series:
     return deciles.reindex(df.index)
 
 
+def _expectation_note(r) -> str:
+    """기대치 E의 근거를 배지에 병기할 문구 — 어느 코호트 평균인지, 바닥값 발동 여부.
+
+    바닥값이 발동한 경우 표시 배수는 R/바닥값이라 실제 코호트 기대치 대비보다 '작게'
+    나온다(바닥값 > 코호트 평균이므로) — 배수가 하한값이라는 사실을 명시한다.
+    """
+    if r["E바닥"]:
+        return f"비교군 평균이 바닥값({E_FLOOR}) 미만이라 바닥값으로 나눔 — 배수는 하한값"
+    if r["E근거"] == "코호트":
+        return f"기대치 = 같은 구간 {r['업태']} {r['E표본']}곳 평균"
+    if r["E근거"] == "구간":
+        return f"기대치 = 같은 구간 전체 {r['E표본']}곳 평균 (동일 업태 표본 {MIN_COHORT}곳 미만)"
+    return f"기대치 = 구역 전체 {r['E표본']}곳 평균 (구간 표본 {MIN_COHORT}곳 미만)"
+
+
 @register_scorer
 class DestinationIndex:
     id = "destination_index"
@@ -49,7 +64,8 @@ class DestinationIndex:
     description = (
         "리뷰 모멘텀(최근 6개월 블로그/업력)이 같은 업태·유사 밀집도 코호트의 기대치를 "
         "얼마나 초과하는지의 백분위. 낮은 밀집도(음영지역)에서 입소문이 붙는 집이 위로 온다. "
-        "블로그가 관측되지 않은 업소는 제외."
+        "블로그가 관측되지 않은 업소는 제외. 코호트 표본이 적으면 밀집도 구간 → 구역 전체 "
+        "평균으로 폴백하며, 어떤 기대치와 비교했는지를 각 배지에 병기합니다."
     )
 
     def score(self, signal_results: dict[str, pd.DataFrame], ctx) -> pd.DataFrame:
@@ -78,16 +94,23 @@ class DestinationIndex:
         # 폴백이 '업태 평균'이면 안 된다 — 음영지역 외톨이 업소(코호트 크기 1이 흔함)가
         # 번화가 강자들이 끌어올린 업태 평균과 비교당해, 정확히 찾으려는 대상(저밀집에서
         # 리뷰 붙는 집)이 눌린다. 십분위 폴백은 입지 수준을 통제한 기대치를 유지한다.
+        #
+        # 어느 단계 기대치와 비교했는지·바닥값이 발동했는지는 업소마다 다르다 — "기대치의
+        # N배"라는 핵심 수치의 근거이므로 배지에 반드시 병기한다 (배지 없는 점수 금지
+        # 계약의 정신: 근거가 보이지 않는 수치도 금지).
         area_mean = float(frame["R"].mean())
         decile_sizes = frame.groupby("십분위")["R"].transform("size")
         decile_mean = frame.groupby("십분위")["R"].transform("mean")
         cohort_sizes = frame.groupby(["업태", "십분위"])["R"].transform("size")
         cohort_mean = frame.groupby(["업태", "십분위"])["R"].transform("mean")
-        expectation = (
-            cohort_mean.where(cohort_sizes >= MIN_COHORT, decile_mean)
-            .where(decile_sizes >= MIN_COHORT, area_mean)
-            .fillna(area_mean)
+        use_cohort = (cohort_sizes >= MIN_COHORT) & cohort_mean.notna()
+        use_decile = ~use_cohort & (decile_sizes >= MIN_COHORT) & decile_mean.notna()
+        expectation = cohort_mean.where(use_cohort, decile_mean.where(use_decile, area_mean)).fillna(area_mean)
+        frame["E근거"] = np.select([use_cohort, use_decile], ["코호트", "구간"], default="구역")
+        frame["E표본"] = (
+            np.select([use_cohort, use_decile], [cohort_sizes, decile_sizes], default=len(frame)).astype(int)
         )
+        frame["E바닥"] = expectation < E_FLOOR
         frame["E"] = expectation.clip(lower=E_FLOOR)
         frame["DI원시"] = frame["R"] / frame["E"]
 
@@ -101,7 +124,8 @@ class DestinationIndex:
         frame["순위"] = frame.index + 1
         frame["근거배지목록"] = frame.apply(
             lambda r: [
-                f"🎯 리뷰 모멘텀이 입지 기대치의 {r['DI원시']:.1f}배 (밀집도 {int(r['십분위'])}/10 구간)",
+                f"🎯 리뷰 모멘텀이 입지 기대치의 {r['DI원시']:.1f}배 "
+                f"(밀집도 {int(r['십분위'])}/10 구간 · {_expectation_note(r)})",
                 *([r["배지"]] if pd.notna(r["배지"]) and r["배지"] else []),
             ],
             axis=1,

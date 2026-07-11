@@ -94,8 +94,10 @@ def test_destination_index_excludes_unobserved_and_ranks_by_ratio(monkeypatch):
         ),
     )
     rows = [
-        # 저밀집 골목 (도보 반경 안, 중심에서 ≈250m 동쪽)
-        {schema.NAME: "골목의보석", schema.CAT_S: "한식", schema.LAT: 37.4979, schema.LON: 127.0304,
+        # 저밀집 골목 — 중심에서 ≈350m 동쪽. 밀집도 반경(300m) 밖이어야 번화가와 다른
+        # 밀집 코호트로 분리된다 (원래 ≈250m였는데 반경 안이라 전부 한 코호트로 묶여
+        # 순위 검증이 동점 정렬 안정성으로만 통과하고 있었음 — Day 14 발견·수정)
+        {schema.NAME: "골목의보석", schema.CAT_S: "한식", schema.LAT: 37.4979, schema.LON: 127.0316,
          schema.LICENSED_AT: "2024-07-01"},
         # 고밀집 번화가: 같은 좌표에 이웃 다수
         {schema.NAME: "번화가평범", schema.CAT_S: "한식", schema.LAT: 37.4979, schema.LON: 127.0276,
@@ -108,7 +110,7 @@ def test_destination_index_excludes_unobserved_and_ranks_by_ratio(monkeypatch):
                      schema.LON: 127.0276, schema.LICENSED_AT: "2024-01-01"})
     for i in range(5):  # 골목 이웃 — 저밀집 코호트 형성, 블로그 드묾
         rows.append({schema.NAME: f"골목이웃{i}", schema.CAT_S: "한식", schema.LAT: 37.4979,
-                     schema.LON: 127.0304, schema.LICENSED_AT: "2024-01-01"})
+                     schema.LON: 127.0316, schema.LICENSED_AT: "2024-01-01"})
     df = make_roster(rows)
     ctx = _ctx(df)
 
@@ -121,8 +123,37 @@ def test_destination_index_excludes_unobserved_and_ranks_by_ratio(monkeypatch):
     ranks = scored.set_index(scorer_base.EST_ID)[scorer_base.RANK]
     assert ranks[ids["골목의보석"]] < ranks[ids["번화가평범"]]  # 저밀집의 같은 관측량이 위
 
+    # "기대치의 N배"의 근거(어느 코호트 평균인지)가 배지에 병기돼야 한다.
+    # 골목 코호트 = 골목의보석 + 골목이웃 5 = 한식 6곳 (MIN_COHORT 충족 → 코호트 기대치)
+    badges = scored.set_index(scorer_base.EST_ID)[scorer_base.BADGES]
+    gem_badge = badges[ids["골목의보석"]][0]
+    assert "기대치 = 같은 구간 한식 6곳 평균" in gem_badge
+
+
+def test_destination_index_badge_flags_expectation_floor(monkeypatch):
+    # 비교군(코호트) 평균 R가 바닥값(E_FLOOR) 미만이면 배수의 분모가 바닥값으로 바뀐다 —
+    # 그 사실과 '표시 배수는 하한값'임이 배지에 드러나야 한다.
+    posts = {"조용한동네보석": 2}  # 업력 10년·블로그 2건 → R≈0.11, 이웃은 전부 0건
+    monkeypatch.setattr(
+        naver, "blog_posts_since", lambda name, token, since: (posts.get(name, 0), None)
+    )
+    rows = [{schema.NAME: "조용한동네보석", schema.LICENSED_AT: "2016-07-01"}]
+    for i in range(5):  # 같은 업태·같은 밀집도 이웃 — 코호트 평균 ≈ 0.11/6 < 0.05
+        rows.append({schema.NAME: f"조용한이웃{i}", schema.LICENSED_AT: "2016-01-01"})
+    df = make_roster(rows)
+    ctx = _ctx(df)
+
+    review = ReviewMomentum().compute(ctx)
+    scored = DestinationIndex().score({"review_momentum": review}, ctx)
+    scorer_base.validate_score_result(scored)
+
+    assert len(scored) == 1  # 블로그 관측은 보석 1곳뿐
+    badge = scored.iloc[0][scorer_base.BADGES][0]
+    assert "바닥값" in badge and "하한값" in badge
+
 
 def test_destination_index_empty_without_review_signal():
     df = make_roster([{schema.NAME: "아무집"}])
     scored = DestinationIndex().score({}, _ctx(df))
     assert len(scored) == 0
+
