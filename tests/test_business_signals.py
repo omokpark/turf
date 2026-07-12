@@ -49,6 +49,29 @@ def test_survivor_empty_without_closure_history():
     assert len(result) == 0
 
 
+def test_survivor_site_average_shrinks_small_samples():
+    """폐업 1건짜리 자리의 0.2년 평균을 그대로 쓰면 '0.2년의 10배' 같은 배지가 나온다 —
+    자리평균은 표본 수만큼 지역 평균과 혼합돼야 한다 (축소추정)."""
+    addr = "서울특별시 강남구 테스트로 9"
+    df = make_roster(
+        [
+            # 이 자리: 직전 입주자가 73일(0.2년) 만에 폐업한 단 1건
+            {schema.NAME: "초단명전임자", schema.ADDR_ROAD: addr, schema.LICENSED_AT: "2024-01-01",
+             schema.CLOSED_AT: "2024-03-14", schema.IS_OPEN: False},
+            {schema.NAME: "현재입주자", schema.ADDR_ROAD: addr, schema.LICENSED_AT: "2024-07-06"},
+            # 다른 자리: 4년 버틴 폐업 — 지역 평균을 2.1년으로 끌어올린다
+            {schema.NAME: "장수폐업", schema.LICENSED_AT: "2020-01-01",
+             schema.CLOSED_AT: "2024-01-01", schema.IS_OPEN: False},
+        ]
+    )
+    result = Survivor().compute(_ctx(df)).set_index(signal_base.EST_ID)
+    cur_id = df[df[schema.NAME] == "현재입주자"][schema.SRC_ID].iloc[0]
+    badge = result.loc[cur_id, signal_base.BADGE]
+    # 원시 자리평균 0.2년이면 "0.2년의 10.0배" — 혼합 후 (0.2+2.1)/2 = 1.1년의 1.7배
+    assert "0.2년" not in badge
+    assert "1.1년의 1.7배" in badge
+
+
 # ── M4 프랜차이즈 판별 ────────────────────────────────────────────────────────
 def test_normalize_name_strips_branch_suffix():
     assert normalize_name("스타벅스 강남역점") == "스타벅스강남"

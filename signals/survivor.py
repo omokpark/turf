@@ -38,9 +38,13 @@ class Survivor:
             return pd.DataFrame(columns=SIGNAL_COLUMNS)  # 폐업 이력 자체가 없으면 기준을 못 세운다
         closed["_주소키"] = address_key(closed)
         closed["_생존기간"] = (closed[schema.CLOSED_AT] - closed[schema.LICENSED_AT]).dt.days / 365.25
-        site_avg = closed.groupby("_주소키")["_생존기간"].mean()
-        site_turnover = closed.groupby("_주소키").size()
-        area_avg = float(site_avg.mean())
+        site_stats = closed.groupby("_주소키")["_생존기간"].agg(["mean", "size"])
+        area_avg = float(site_stats["mean"].mean())
+        # 자리평균 축소추정: 폐업 1건짜리 자리의 0.2년 같은 소표본 평균을 그대로 쓰면
+        # "그 자리 평균 생존 0.2년의 10배" 같은 배지가 나온다 — 표본 수(n)만큼만 자리
+        # 관측을 믿고 나머지는 지역 평균으로 채운다 (n이 클수록 자리 관측에 수렴).
+        site_avg = (site_stats["size"] * site_stats["mean"] + area_avg) / (site_stats["size"] + 1)
+        site_turnover = site_stats["size"]
 
         open_df["_주소키"] = address_key(open_df)
         open_df["_업력"] = (ctx.now - open_df[schema.LICENSED_AT]).dt.days / 365.25
@@ -67,7 +71,10 @@ class Survivor:
                     VALUE: round(value, 4),
                     RAW: round(row["_업력"], 2),
                     BADGE: badge,
-                    DETAIL: f"인허가일자 {row[schema.LICENSED_AT]:%Y-%m-%d} 기준, 지역 평균 생존기간 {area_avg:.1f}년",
+                    DETAIL: (
+                        f"인허가일자 {row[schema.LICENSED_AT]:%Y-%m-%d} 기준, 지역 평균 생존기간 {area_avg:.1f}년. "
+                        "자리 평균은 폐업 표본 수만큼 지역 평균과 혼합(축소추정)"
+                    ),
                 }
             )
         return pd.DataFrame(rows, columns=SIGNAL_COLUMNS)
