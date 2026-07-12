@@ -54,7 +54,7 @@ def _rate_and_trend(dates: list[pd.Timestamp], now: pd.Timestamp) -> tuple[float
 @register_signal
 class StarLevel:
     id = "star_level"
-    label = "알려진 스타"
+    label = "동네 유명 맛집"
     badge_icon = "⭐"
     requires = frozenset({"moi", "naver"})
 

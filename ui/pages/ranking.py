@@ -162,6 +162,7 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
         "랭킹 기준",
         scorers_avail,
         format_func=lambda s: s.label,
+        captions=[s.caption for s in scorers_avail],
         horizontal=True,
         key="ranking_scorer",
     )

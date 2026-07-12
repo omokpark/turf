@@ -23,7 +23,8 @@ SCORE_COLUMNS = [EST_ID, SCORE, RANK, BADGES]
 @runtime_checkable
 class Scorer(Protocol):
     id: str            # "weighted_sum"
-    label: str         # "가중합 베이스라인"
+    label: str         # "방문 타이밍"
+    caption: str       # 한 줄 요약 — 랭킹 기준 radio 선택지 밑에 상시 표시
     description: str   # UI 설명문 — 어떤 신호를 어떻게 합치는지
 
     def score(self, signal_results: dict[str, pd.DataFrame], ctx: AreaContext) -> pd.DataFrame:
