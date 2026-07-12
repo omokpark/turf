@@ -18,7 +18,7 @@ from datasources import moi_store, naver, places, places_quota, seoul
 from datasources.places_quota import QuotaExceeded
 from scorers.base import available_scorers, validate_score_result
 from signals.base import AreaContext
-from signals.outlook import phase_trajectory
+from signals.outlook import current_phase
 from signals.registry import available_signals
 from ui import data
 from ui.components.badges import quota_signal, render_badges
@@ -128,9 +128,11 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
 
     outlook_area = Area(cx=cx, cy=cy, radius=OUTLOOK_RADIUS_M)
     outlook_local = filter_radius(roster.dropna(subset=[schema.LAT, schema.LON]), outlook_area)
-    traj = phase_trajectory(outlook_local, years=6)
-    if len(traj) > 0:
-        st.caption(f"구역 국면(반경 {OUTLOOK_RADIUS_M}m 기준, 참고용 맥락): **{traj.iloc[-1]['국면']}**")
+    now_phase = current_phase(outlook_local)
+    if now_phase:
+        st.caption(
+            f"구역 국면(반경 {OUTLOOK_RADIUS_M}m·최근 12개월 기준, 참고용 맥락): **{now_phase['국면']}**"
+        )
 
     ctx = AreaContext(area=area, establishments=local, rosters={"moi": local}, reference=roster)
     # 키가 있으면 해당 신호가 자동으로 켜진다: naver(리뷰·버즈·목적지 지수), seoul(야간 지수)

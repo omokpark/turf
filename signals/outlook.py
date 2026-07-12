@@ -84,10 +84,19 @@ PHASE_CHURN = "🔄 교체 활발"
 PHASE_STAGNANT = "😴 정체"
 PHASE_DECLINE = "📉 수축"
 
+# 증감 완충대: 직전 기간 대비 ±10% 안쪽 변화는 노이즈로 보고 '변화 없음' 취급.
+# 부호만 보면 개업 12→13(+8%)도 '확장'이 되는 과민 판정을 막는다 (2026-07-12).
+PHASE_BUFFER = 0.10
 
-def _phase_label(d_open: int, d_close: int) -> str:
-    open_up = d_open > 0
-    close_up = d_close > 0
+
+def _increased(cur: int, prev: int) -> bool:
+    """직전 대비 유의미한 증가인가 — 완충대(±10%)를 넘어야 증가로 친다."""
+    return cur > prev * (1 + PHASE_BUFFER)
+
+
+def _phase_label(cur_open: int, prev_open: int, cur_close: int, prev_close: int) -> str:
+    open_up = _increased(cur_open, prev_open)
+    close_up = _increased(cur_close, prev_close)
     if open_up and not close_up:
         return PHASE_EXPANSION
     if open_up and close_up:
@@ -117,19 +126,45 @@ def phase_trajectory(df: pd.DataFrame, years: int = 5, today: pd.Timestamp | Non
         n_open = int((opened == y).sum())
         n_close = int((closed == y).sum())
         if prev_open is not None:
-            d_open, d_close = n_open - prev_open, n_close - prev_close
             rows.append(
                 {
                     "연도": y,
                     "개업": n_open,
                     "폐업": n_close,
-                    "개업증감": d_open,
-                    "폐업증감": d_close,
-                    "국면": _phase_label(d_open, d_close),
+                    "개업증감": n_open - prev_open,
+                    "폐업증감": n_close - prev_close,
+                    "국면": _phase_label(n_open, prev_open, n_close, prev_close),
                 }
             )
         prev_open, prev_close = n_open, n_close
     return pd.DataFrame(rows)
+
+
+def current_phase(df: pd.DataFrame, today: pd.Timestamp | None = None) -> dict | None:
+    """'지금' 국면 — 최근 12개월 vs 직전 12개월 이동창.
+
+    phase_trajectory는 달력 연도 기준이라 올해(부분 연도)를 제외하면 7월에 '작년 기준'
+    국면이 나온다 — 최대 18개월 지연. 헤드라인 국면은 이 이동창 판정을 쓴다 (2026-07-12).
+    반환: {국면, 최근개업, 최근폐업, 직전개업, 직전폐업} — 표본이 전혀 없으면 None.
+    """
+    today = today or pd.Timestamp.today()
+    mid = today - pd.DateOffset(months=12)
+    start = today - pd.DateOffset(months=24)
+    opened = df[schema.LICENSED_AT]
+    closed = df[schema.CLOSED_AT]
+    cur_open = int(opened.between(mid, today).sum())
+    prev_open = int(opened.between(start, mid).sum())
+    cur_close = int(closed.between(mid, today).sum())
+    prev_close = int(closed.between(start, mid).sum())
+    if cur_open + prev_open + cur_close + prev_close == 0:
+        return None
+    return {
+        "국면": _phase_label(cur_open, prev_open, cur_close, prev_close),
+        "최근개업": cur_open,
+        "최근폐업": cur_close,
+        "직전개업": prev_open,
+        "직전폐업": prev_close,
+    }
 
 
 # ── 격자 percentile ──────────────────────────────────────────────────────────

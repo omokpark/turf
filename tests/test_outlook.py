@@ -59,6 +59,40 @@ def test_phase_trajectory_quadrants():
     assert out[out["연도"] == 2025].iloc[0]["국면"] == outlook.PHASE_CHURN
 
 
+def test_phase_label_buffer_treats_small_changes_as_flat():
+    # 개업 12→13(+8%)·폐업 10→9(−10%)는 완충대(±10%) 안 — '확장'이 아니라 '정체'
+    assert outlook._phase_label(13, 12, 9, 10) == outlook.PHASE_STAGNANT
+    # 완충대를 넘는 증가만 국면을 바꾼다: 개업 12→14(+17%) → 확장
+    assert outlook._phase_label(14, 12, 9, 10) == outlook.PHASE_EXPANSION
+    # 직전 0에서의 첫 발생은 증가로 친다: 폐업 0→3 → 수축
+    assert outlook._phase_label(10, 10, 3, 0) == outlook.PHASE_DECLINE
+
+
+def test_current_phase_uses_trailing_12m_windows():
+    rows = []
+    # 최근 12개월(2025-07-06 이후): 개업 6 — 직전 12개월: 개업 3 (+100% → 증가)
+    for m in ("2025-08-01", "2025-10-01", "2025-12-01", "2026-02-01", "2026-04-01", "2026-06-01"):
+        rows.append({schema.LICENSED_AT: m})
+    for m in ("2024-08-01", "2024-11-01", "2025-03-01"):
+        rows.append({schema.LICENSED_AT: m})
+    # 폐업: 최근 2 vs 직전 2 (변화 없음)
+    rows.append({schema.LICENSED_AT: "2015-01-01", schema.CLOSED_AT: "2025-09-01", schema.IS_OPEN: False})
+    rows.append({schema.LICENSED_AT: "2015-01-01", schema.CLOSED_AT: "2026-01-01", schema.IS_OPEN: False})
+    rows.append({schema.LICENSED_AT: "2015-01-01", schema.CLOSED_AT: "2024-09-01", schema.IS_OPEN: False})
+    rows.append({schema.LICENSED_AT: "2015-01-01", schema.CLOSED_AT: "2025-05-01", schema.IS_OPEN: False})
+    df = make_roster(rows)
+
+    result = outlook.current_phase(df, today=TODAY)
+    assert result["국면"] == outlook.PHASE_EXPANSION  # 개업↑·폐업 변화 없음
+    assert result["최근개업"] == 6 and result["직전개업"] == 3
+    assert result["최근폐업"] == 2 and result["직전폐업"] == 2
+
+
+def test_current_phase_empty_returns_none():
+    df = make_roster([{schema.LICENSED_AT: "2010-01-01"}])  # 24개월 창 밖
+    assert outlook.current_phase(df, today=TODAY) is None
+
+
 # ── 순증 모멘텀 ──────────────────────────────────────────────────────────────
 def test_net_momentum_numbers():
     df = make_roster(

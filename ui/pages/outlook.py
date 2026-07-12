@@ -16,7 +16,7 @@ from core import schema
 from core.area import Area, adaptive_area, filter_radius
 from datasources import moi_store
 from signals.base import AreaContext, IndicatorResult
-from signals.outlook import LIQUOR_CATS, LIQUOR_NAME_KEYWORDS, phase_trajectory
+from signals.outlook import LIQUOR_CATS, LIQUOR_NAME_KEYWORDS, PHASE_BUFFER, current_phase, phase_trajectory
 from signals.registry import available_indicators
 from timeline import trend
 from ui import data
@@ -160,9 +160,19 @@ def _render_phase_matrix(local: pd.DataFrame) -> None:
         st.info("국면 궤적을 그리기에 연도별 이력이 부족합니다.")
         return
 
-    latest = traj.iloc[-1]
-    st.markdown(f"#### 🧭 구역 국면 — {int(latest['연도'])}년 기준 **{latest['국면']}**")
-    st.caption("막대 위=개업, 아래=폐업, 선=순증. 상단 이모지가 그 해의 국면 (올해는 부분 연도라 제외).")
+    # 헤드라인 국면은 달력 연도가 아니라 최근 12개월 이동창 — '지금'을 답한다
+    now_phase = current_phase(local)
+    if now_phase:
+        st.markdown(f"#### 🧭 구역 국면 — 최근 12개월 기준 **{now_phase['국면']}**")
+        st.caption(
+            f"최근 12개월 개업 {now_phase['최근개업']}·폐업 {now_phase['최근폐업']} "
+            f"(직전 12개월 {now_phase['직전개업']}·{now_phase['직전폐업']}) · "
+            f"±{PHASE_BUFFER:.0%} 안쪽 변화는 '변화 없음'으로 판정 · "
+            "아래 차트: 막대 위=개업, 아래=폐업, 선=순증, 상단 이모지=그 해의 국면 (올해는 부분 연도라 제외)"
+        )
+    else:
+        st.markdown("#### 🧭 구역 국면")
+        st.caption("막대 위=개업, 아래=폐업, 선=순증. 상단 이모지가 그 해의 국면 (올해는 부분 연도라 제외).")
 
     # phase_trajectory는 증감·국면까지만 주므로 순증은 여기서 파생
     df = traj.assign(순증=traj["개업"] - traj["폐업"])
