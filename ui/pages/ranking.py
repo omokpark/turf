@@ -3,6 +3,13 @@
 판단 원칙: 점수는 항상 근거 배지와 함께 나온다 (Scorer 계약이 강제). 추천·예측
 문구는 쓰지 않는다. 구역 아웃룩의 국면은 랭킹 위에 맥락으로만 병기한다 — 개별 업소의
 근거가 아니라 "이 구역 전체가 지금 어떤 판인가"라는 별도 정보이기 때문이다.
+
+피드백 2채널 (2026-07-12 설계): 카드마다 👍 방문가치 높았음/👎 없었음(그 순간의
+신호값·점수 스냅샷과 함께 저장, 추후 배지별 lift 분석·가중치 조정용)과 별도로,
+"⋯" 안에 폐업했어요/우리 거래처예요(업소의 지속적 속성 — 랭킹 품질 피드백과 절대
+섞이지 않는다. 안 그러면 "이미 거래처라 없었음"이 학습돼 최고의 개척 후보를 피하게
+된다). 노출 로그(feedback_store.log_exposure)는 피드백 유무와 무관하게 상위 30곳을
+기록해, 나중에 "피드백군 vs 노출 전체"의 대조군 역할을 한다.
 """
 
 import html
@@ -14,9 +21,10 @@ from streamlit_folium import st_folium
 
 from core import schema
 from core.area import Area, OUTLOOK_RADIUS_M, filter_radius
-from datasources import moi_store, naver, places, places_quota, seoul
+from datasources import feedback_store, moi_store, naver, places, places_quota, seoul
 from datasources.places_quota import QuotaExceeded
 from scorers.base import available_scorers, validate_score_result
+from signals import base as signal_base
 from signals.base import AreaContext
 from signals.outlook import current_phase, liquor_affinity
 from signals.registry import available_signals
@@ -215,10 +223,30 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
 
     top["근거"] = top["근거배지목록"].map(lambda badges: " · ".join(badges))
 
+    # 신호값 스냅샷 준비 — 업소별로 set_index를 반복하지 않도록 한 번만 인덱싱
+    indexed_signals = {sig_id: df.set_index(signal_base.EST_ID) for sig_id, df in signal_results.items()}
+
+    # 노출 로그: 피드백이 없어도 "무엇이 노출됐는지"가 있어야 배지별 lift(피드백군 vs
+    # 노출 전체)를 나중에 계산할 수 있다 — 같은 (날짜·구역·스코어러)는 최신 것으로 덮어쓴다.
+    exposure_rows = [
+        {
+            "순위": int(row["순위"]), "업소ID": row["업소ID"], "상호": row[schema.NAME],
+            "점수": float(row["점수"]),
+            "신호값": feedback_store.signal_snapshot(indexed_signals, row["업소ID"]),
+            "배지": row["근거배지목록"],
+        }
+        for _, row in top.iterrows()
+    ]
+    feedback_store.log_exposure(scorer.id, cx, cy, radius, exposure_rows)
+
+    fb_state = feedback_store.latest_feedback()
+    attr_state = feedback_store.latest_attributes()
+
     excluded_note = f" · 주류 판매 불가 업소 {n_excluded}곳 제외" if n_excluded else ""
     st.markdown(f"##### 📋 상위 {len(top)}곳 (근거 있는 전체 {len(scored)}곳 중{excluded_note})")
     for _, row in top.iterrows():
         rank = int(row["순위"])
+        est_id = row["업소ID"]
         medal = RANK_MEDALS.get(rank, f"{rank}위")
         with st.container(border=True):
             head_col, score_col = st.columns([4, 1])
@@ -231,6 +259,60 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
                 score = min(1.0, max(0.0, float(row["점수"])))
                 st.progress(score, text=f"{score:.2f}")
             render_badges(row["근거배지목록"])
+
+            shop_attrs = attr_state.get(est_id, {})
+            attr_chips = []
+            if shop_attrs.get(feedback_store.ATTR_CLOSED):
+                attr_chips.append("🚫 폐업 신고됨 (직접 표시)")
+            if shop_attrs.get(feedback_store.ATTR_CLIENT):
+                attr_chips.append("🏷️ 우리 거래처")
+            if attr_chips:
+                render_badges(attr_chips)
+
+            current_label = fb_state.get(est_id, {}).get("라벨")
+            up_col, down_col, more_col = st.columns([2, 2, 1])
+            with up_col:
+                if st.button(
+                    "👍 방문가치 높았음", key=f"fb_up_{rank}_{est_id}", use_container_width=True,
+                    type="primary" if current_label == feedback_store.LABEL_UP else "secondary",
+                ):
+                    feedback_store.record_feedback(
+                        est_id, row[schema.NAME], feedback_store.LABEL_UP, scorer.id,
+                        cx, cy, radius, float(row["점수"]), row["근거배지목록"],
+                        feedback_store.signal_snapshot(indexed_signals, est_id),
+                    )
+                    st.toast(f"👍 {row[schema.NAME]} — 방문가치 높았음으로 기록했습니다.")
+                    st.rerun()
+            with down_col:
+                if st.button(
+                    "👎 방문가치 없었음", key=f"fb_down_{rank}_{est_id}", use_container_width=True,
+                    type="primary" if current_label == feedback_store.LABEL_DOWN else "secondary",
+                ):
+                    feedback_store.record_feedback(
+                        est_id, row[schema.NAME], feedback_store.LABEL_DOWN, scorer.id,
+                        cx, cy, radius, float(row["점수"]), row["근거배지목록"],
+                        feedback_store.signal_snapshot(indexed_signals, est_id),
+                    )
+                    st.toast(f"👎 {row[schema.NAME]} — 방문가치 없었음으로 기록했습니다.")
+                    st.rerun()
+            with more_col:
+                with st.popover("⋯", use_container_width=True):
+                    # 방문가치 피드백과 분리된 채널 — "이미 거래처라 없었음"이 랭킹 품질
+                    # 피드백으로 섞이면 모델이 최고의 개척 후보를 피하도록 학습하게 된다.
+                    new_closed = st.checkbox(
+                        "🚫 폐업했어요", value=shop_attrs.get(feedback_store.ATTR_CLOSED, False),
+                        key=f"attr_closed_{rank}_{est_id}",
+                    )
+                    if new_closed != shop_attrs.get(feedback_store.ATTR_CLOSED, False):
+                        feedback_store.record_attribute(est_id, row[schema.NAME], feedback_store.ATTR_CLOSED, new_closed)
+                        st.rerun()
+                    new_client = st.checkbox(
+                        "🏷️ 우리 거래처예요", value=shop_attrs.get(feedback_store.ATTR_CLIENT, False),
+                        key=f"attr_client_{rank}_{est_id}",
+                    )
+                    if new_client != shop_attrs.get(feedback_store.ATTR_CLIENT, False):
+                        feedback_store.record_attribute(est_id, row[schema.NAME], feedback_store.ATTR_CLIENT, new_client)
+                        st.rerun()
 
     # 방문 리스트 CSV — 상위 N곳 + 근거 (업종 구성 탭에 있던 내보내기를 여기로 흡수)
     export = top[["순위", schema.NAME, schema.CAT_S, schema.ADDR_ROAD, "점수", "근거"]].rename(
