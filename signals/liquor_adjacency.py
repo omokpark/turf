@@ -32,7 +32,7 @@ class LiquorAdjacency:
         if len(open_df) == 0:
             return pd.DataFrame(columns=SIGNAL_COLUMNS)
 
-        liquor = open_df[is_liquor_friendly(open_df[schema.CAT_S], open_df[schema.NAME])]
+        liquor = open_df[is_liquor_friendly(open_df[schema.CAT_S], open_df[schema.NAME], open_df[schema.CAT_L])]
         if len(liquor) == 0:
             return pd.DataFrame(columns=SIGNAL_COLUMNS)
 

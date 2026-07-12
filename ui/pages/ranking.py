@@ -18,7 +18,7 @@ from datasources import moi_store, naver, places, places_quota, seoul
 from datasources.places_quota import QuotaExceeded
 from scorers.base import available_scorers, validate_score_result
 from signals.base import AreaContext
-from signals.outlook import current_phase
+from signals.outlook import current_phase, liquor_affinity
 from signals.registry import available_signals
 from ui import data
 from ui.components.badges import quota_signal, render_badges
@@ -169,6 +169,18 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
         scored = scorer.score(signal_results, ctx)
     validate_score_result(scored)
 
+    # 주류 판매 불가 업소(휴게음식점 등 affinity 0 — 카페·패스트푸드류)는 방문 영업
+    # 대상이 아니다 — 지도 탭과 같은 기준으로 랭킹에서 제외하고 순위를 다시 매긴다.
+    # (신호·밀집도 계산에는 포함 — 유동 프록시·전환 벡터의 모수는 전 업소가 맞다.)
+    aff = local.apply(
+        lambda r: liquor_affinity(r[schema.CAT_S], r[schema.NAME], r[schema.CAT_L]), axis=1
+    )
+    sellable = set(local.loc[aff.values >= 1, schema.SRC_ID])
+    n_before = len(scored)
+    scored = scored[scored["업소ID"].isin(sellable)].reset_index(drop=True)
+    scored["순위"] = scored.index + 1
+    n_excluded = n_before - len(scored)
+
     if len(scored) == 0:
         st.info("근거를 만들 수 있는 업소가 없습니다.")
         return
@@ -203,7 +215,8 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
 
     top["근거"] = top["근거배지목록"].map(lambda badges: " · ".join(badges))
 
-    st.markdown(f"##### 📋 상위 {len(top)}곳 (근거 있는 전체 {len(scored)}곳 중)")
+    excluded_note = f" · 주류 판매 불가 업소 {n_excluded}곳 제외" if n_excluded else ""
+    st.markdown(f"##### 📋 상위 {len(top)}곳 (근거 있는 전체 {len(scored)}곳 중{excluded_note})")
     for _, row in top.iterrows():
         rank = int(row["순위"])
         medal = RANK_MEDALS.get(rank, f"{rank}위")

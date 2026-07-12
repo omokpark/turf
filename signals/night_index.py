@@ -51,7 +51,7 @@ class NightIndex:
         # >=1 기준으로는 거의 전부가 주류친화가 되어 변별력이 사라진다.
         affinity = np.array(
             [
-                liquor_affinity(row[schema.CAT_S], row[schema.NAME]) >= 2
+                liquor_affinity(row[schema.CAT_S], row[schema.NAME], row[schema.CAT_L]) >= 2
                 for _, row in open_df.iterrows()
             ]
         )

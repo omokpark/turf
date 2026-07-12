@@ -16,7 +16,9 @@ def _liquor_share(df: pd.DataFrame, start: pd.Timestamp, end: pd.Timestamp) -> t
     openings = df[df[schema.LICENSED_AT].between(start, end)]
     if len(openings) == 0:
         return None, 0
-    share = is_liquor_friendly(openings[schema.CAT_S], openings[schema.NAME]).mean()
+    share = is_liquor_friendly(
+        openings[schema.CAT_S], openings[schema.NAME], openings[schema.CAT_L]
+    ).mean()
     return float(share), len(openings)
 
 

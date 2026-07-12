@@ -28,11 +28,15 @@ PAGE_SIZE = 100  # API 상한
 REQUEST_INTERVAL_S = 0.15  # 과속 방지 — 일 10,000회 한도 내에서도 서버 예의
 MAX_RETRIES = 3
 
-# 업종 → 서비스 경로. 새 업종(휴게음식점 등)은 여기 한 줄 추가로 확장.
+# 업종 → 서비스 경로. 새 업종은 여기 한 줄 추가로 확장.
+# ⚠️ rest_cafes(휴게음식점)는 data.go.kr에서 해당 API('행정안전부_식품_휴게음식점
+# 조회서비스', data/15154921) **활용신청을 별도로 해야** 403이 풀린다 (2026-07-12 확인
+# — 같은 키로 기존 3종은 200, rest_cafes만 403).
 SERVICES = {
     "일반음식점": "general_restaurants",
     "단란주점": "singing_bars",
     "유흥주점": "entertainment_bars",
+    "휴게음식점": "rest_cafes",
 }
 
 _TRANSFORMER = Transformer.from_crs("EPSG:5174", "EPSG:4326", always_xy=True)
@@ -107,7 +111,9 @@ def normalize(raw: pd.DataFrame, category: str) -> pd.DataFrame:
     out[schema.SRC] = "moi"
     out[schema.SRC_ID] = raw["MNG_NO"].astype(str)
     out[schema.NAME] = raw["BPLC_NM"].astype(str).str.strip()
-    out[schema.CAT_L] = None
+    # 업종대 = 인허가 업종(일반음식점/휴게음식점/...) — 휴게음식점은 주류 판매 불가
+    # 업종이라 liquor_affinity 판정에 필요하다. 기존 파티션(None)은 재수집 시 채워진다.
+    out[schema.CAT_L] = category
     out[schema.CAT_M] = None
     # 업태구분명이 비면 업종 카테고리 자체(일반음식점 등)로 대체
     bzstat = raw["BZSTAT_SE_NM"].astype(str).str.strip()

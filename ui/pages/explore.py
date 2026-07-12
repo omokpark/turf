@@ -27,7 +27,7 @@ def _build_display(roster: pd.DataFrame, cx: float, cy: float, radius: int, affi
     if len(near) == 0:
         return near.assign(상태=pd.Series(dtype=str))
 
-    affinity = near.apply(lambda r: liquor_affinity(r[schema.CAT_S], r[schema.NAME]), axis=1)
+    affinity = near.apply(lambda r: liquor_affinity(r[schema.CAT_S], r[schema.NAME], r[schema.CAT_L]), axis=1)
     near = near[affinity >= affinity_min].copy()
     if len(near) == 0:
         return near.assign(상태=pd.Series(dtype=str))

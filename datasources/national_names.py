@@ -89,9 +89,15 @@ def _fetch_page_resilient(category: str, page: int, log) -> tuple[list[dict], in
     raise RuntimeError(f"{category} {page}페이지: {PAGE_RETRY_ATTEMPTS}회 재시도 후에도 실패 — {last_error}")
 
 
+# 전국 빈도 스캔 대상 업종 — 주류 영업 대상(랭킹에 오르는) 업종만. 휴게음식점은
+# 주류 판매 불가라 랭킹에서 제외되므로 체인 판별 실익이 낮고, 전국 71만 건을 더
+# 도는 비용만 든다 (moi_api.SERVICES 확장과 스캔 범위를 분리, 2026-07-12).
+SCAN_CATEGORIES = ["일반음식점", "단란주점", "유흥주점"]
+
+
 def scan(categories: list[str] | None = None, log=print) -> pd.DataFrame:
     """전국 영업중 상호 스캔 (재개 가능). 완료 시 parquet 저장 후 카운트 DataFrame 반환."""
-    categories = categories or list(moi_api.SERVICES)
+    categories = categories or SCAN_CATEGORIES
     state = _load_checkpoint()
     if state["done"] or state["category"]:
         log(f"체크포인트에서 재개: 완료 {state['done']}, 진행 중 {state['category']} p.{state['next_page']}")

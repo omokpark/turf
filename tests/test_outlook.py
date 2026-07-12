@@ -40,6 +40,23 @@ def test_liquor_classification():
     assert list(flags) == [True, True, False]
 
 
+def test_liquor_classification_rest_cafes_never_liquor():
+    """휴게음식점 인허가는 주류 판매가 불가 — 상호에 '펍'이 있어도 제외돼야 한다."""
+    df = make_roster(
+        [
+            {schema.NAME: "브루펍카페", schema.CAT_S: "기타", schema.CAT_L: "휴게음식점"},
+            {schema.NAME: "브루펍", schema.CAT_S: "기타", schema.CAT_L: "일반음식점"},
+        ]
+    )
+    flags = outlook.is_liquor_friendly(df[schema.CAT_S], df[schema.NAME], df[schema.CAT_L])
+    assert list(flags) == [False, True]
+
+    assert outlook.liquor_affinity("기타", "브루펍카페", "휴게음식점") == 0
+    assert outlook.liquor_affinity("기타", "브루펍", "일반음식점") == 2
+    # cat_l 미지정(구 파티션 NaN)이면 기존 판정 유지
+    assert outlook.liquor_affinity("기타", "브루펍") == 2
+
+
 # ── 국면 궤적 ────────────────────────────────────────────────────────────────
 def test_phase_trajectory_quadrants():
     rows = []

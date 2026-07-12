@@ -40,9 +40,13 @@ class ConversionVector:
         # 각 영업중 업소의 '직전 입주자': 같은 주소에서 이 업소 인허가 전에 폐업한 가장 최근 업소
         predecessors = (
             pd.merge_asof(
-                open_df.sort_values(schema.LICENSED_AT)[["_주소키", schema.SRC_ID, schema.NAME, schema.CAT_S, schema.LICENSED_AT]],
-                closed.sort_values(schema.CLOSED_AT)[["_주소키", schema.NAME, schema.CAT_S, schema.CLOSED_AT]].rename(
-                    columns={schema.NAME: "_전상호", schema.CAT_S: "_전업태"}
+                open_df.sort_values(schema.LICENSED_AT)[
+                    ["_주소키", schema.SRC_ID, schema.NAME, schema.CAT_S, schema.CAT_L, schema.LICENSED_AT]
+                ],
+                closed.sort_values(schema.CLOSED_AT)[
+                    ["_주소키", schema.NAME, schema.CAT_S, schema.CAT_L, schema.CLOSED_AT]
+                ].rename(
+                    columns={schema.NAME: "_전상호", schema.CAT_S: "_전업태", schema.CAT_L: "_전업종"}
                 ),
                 left_on=schema.LICENSED_AT,
                 right_on=schema.CLOSED_AT,
@@ -57,8 +61,8 @@ class ConversionVector:
 
         rows = []
         for _, row in predecessors.iterrows():
-            prev_aff = liquor_affinity(row["_전업태"], row["_전상호"])
-            cur_aff = liquor_affinity(row[schema.CAT_S], row[schema.NAME])
+            prev_aff = liquor_affinity(row["_전업태"], row["_전상호"], row["_전업종"])
+            cur_aff = liquor_affinity(row[schema.CAT_S], row[schema.NAME], row[schema.CAT_L])
             delta = cur_aff - prev_aff
             value = max(0.0, delta / MAX_DELTA)  # 주류친화 방향 전환만 점수화, 반대는 0
             badge = (

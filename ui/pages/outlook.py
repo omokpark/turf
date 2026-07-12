@@ -255,6 +255,7 @@ def _render_indicator_cards(results_by_id: dict[str, IndicatorResult]) -> None:
                 st.caption(
                     "**주류친화 업태**: " + ", ".join(sorted(LIQUOR_CATS))
                     + " + 상호에 " + "·".join(LIQUOR_NAME_KEYWORDS) + " 포함"
+                    + " · 휴게음식점 인허가(주류 판매 불가)는 제외"
                 )
             if res.series is not None and len(res.series) > 0:
                 st.altair_chart(_series_chart(ind.id, res.series), width="stretch")
