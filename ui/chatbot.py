@@ -15,7 +15,7 @@ from google.genai import errors, types
 
 from core import config
 
-MODEL = "gemini-2.5-flash"  # 무료 티어·빠름. Q&A/필터에 충분
+MODEL = "gemini-2.5-flash-lite"  # 가장 저렴한(무료에 가장 가까운) 계열. Q&A/필터에 충분
 
 SYSTEM_PROMPT = """너는 주류회사 영업사원용 도구 'Sales Radar'의 화면 도우미다.
 아래 '===화면 데이터==='에 담긴, 사용자가 지금 보고 있는 데이터에만 근거해 한국어로 답한다.
@@ -57,7 +57,8 @@ def _stream(client: genai.Client, context_md: str, history: list[dict]):
         for m in history
     ]
     cfg = types.GenerateContentConfig(
-        system_instruction=f"{SYSTEM_PROMPT}\n\n===화면 데이터===\n{context_md}"
+        system_instruction=f"{SYSTEM_PROMPT}\n\n===화면 데이터===\n{context_md}",
+        thinking_config=types.ThinkingConfig(thinking_budget=0),  # 추론 끔 — 비용·속도 최우선
     )
     for chunk in client.models.generate_content_stream(model=MODEL, contents=contents, config=cfg):
         if chunk.text:
