@@ -10,8 +10,11 @@ from types import SimpleNamespace
 import pandas as pd
 
 from core import schema
+from signals import base as signal_base
 from signals.base import IndicatorResult
 from ui import chat_context
+
+import signals.review_momentum  # noqa: F401 — get_signal 라벨 조회용 등록
 
 from tests.conftest import make_roster
 
@@ -54,23 +57,72 @@ def test_map_context_truncates_and_says_so():
 
 
 # ── 방문 우선순위 ─────────────────────────────────────────────────────────────
+def _ranking_frame(rows: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame(rows)
+
+
 def test_ranking_context_has_scorer_badges_and_phase():
-    top = pd.DataFrame({
-        "순위": [1, 2],
-        schema.NAME: ["지안식당", "샐러링"],
-        schema.CAT_S: ["한식", "카페"],
-        "점수": [0.98, 0.91],
-        schema.ADDR_ROAD: ["강남대로 1", "강남대로 2"],
-        "근거배지목록": [["🎯 기대치의 3.2배", "블로그 100건"], ["🌱 개업 98일차"]],
-    })
+    top = _ranking_frame([
+        {"순위": 1, "업소ID": "A", schema.NAME: "지안식당", schema.CAT_S: "한식",
+         "점수": 0.98, schema.ADDR_ROAD: "강남대로 1",
+         "근거배지목록": ["🎯 기대치의 3.2배", "블로그 100건"]},
+        {"순위": 2, "업소ID": "B", schema.NAME: "샐러링", schema.CAT_S: "카페",
+         "점수": 0.91, schema.ADDR_ROAD: "강남대로 2", "근거배지목록": ["🌱 개업 98일차"]},
+    ])
+    rest = _ranking_frame([])
     scorer = SimpleNamespace(label="숨은 맛집", description="입소문 강한 집")
-    ctx = chat_context.ranking_context(top, scorer, {"국면": "📈 확장"}, n_excluded=23, radius=400)
+    ctx = chat_context.ranking_context(
+        top, rest, scorer, {"국면": "📈 확장"}, n_excluded=23, radius=400, indexed_signals={}
+    )
     assert "숨은 맛집" in ctx and "입소문 강한 집" in ctx
     assert "지안식당" in ctx and "강남대로 1" in ctx
     assert "기대치의 3.2배 / 블로그 100건" in ctx  # 배지 join
     assert "📈 확장" in ctx
     assert "23곳" in ctx  # 제외 안내
     assert "글 원문" in ctx  # 미수집 가드 문구
+    assert "전체 2" in ctx  # 근거 있는 전체 수 표기
+
+
+def test_ranking_context_includes_rows_beyond_top_and_signal_detail():
+    """31위 이하(카드 밖)도 컨텍스트에 담기고, 배지 문구 외 '상세'도 포함되는지."""
+    top = _ranking_frame([
+        {"순위": 1, "업소ID": "A", schema.NAME: "지안식당", schema.CAT_S: "한식",
+         "점수": 0.98, schema.ADDR_ROAD: "강남대로 1", "근거배지목록": ["🎯 기대치의 3.2배"]},
+    ])
+    rest = _ranking_frame([
+        {"순위": 31, "업소ID": "B", schema.NAME: "뒷골목집", schema.CAT_S: "호프/통닭",
+         "점수": 0.40, schema.ADDR_ROAD: "이면도로 5", "근거배지목록": ["⭐ 알려진 스타"]},
+    ])
+    indexed_signals = {
+        "review_momentum": pd.DataFrame(
+            {signal_base.EST_ID: ["B"], signal_base.VALUE: [0.5], signal_base.RAW: [1.2],
+             signal_base.BADGE: ["⭐ 알려진 스타"], signal_base.DETAIL: ["'뒷골목집 이면도로' 검색, R=0.5"]}
+        ).set_index(signal_base.EST_ID)
+    }
+    scorer = SimpleNamespace(label="방문 타이밍", description="종합 점수")
+    ctx = chat_context.ranking_context(
+        top, rest, scorer, None, n_excluded=0, radius=400, indexed_signals=indexed_signals
+    )
+    assert "뒷골목집" in ctx  # 31위(카드 밖)도 포함
+    assert "31" in ctx
+    assert "R=0.5" in ctx  # 배지 문구를 넘어선 '상세' 필드
+    assert "전체 2" in ctx  # top 1 + rest 1
+
+
+def test_ranking_context_truncates_when_over_cap():
+    top = _ranking_frame([
+        {"순위": i + 1, "업소ID": f"T{i}", schema.NAME: f"업소{i}", schema.CAT_S: "한식",
+         "점수": 0.9, schema.ADDR_ROAD: "주소", "근거배지목록": ["배지"]}
+        for i in range(30)
+    ])
+    rest = _ranking_frame([
+        {"순위": 31 + i, "업소ID": f"R{i}", schema.NAME: f"나머지{i}", schema.CAT_S: "한식",
+         "점수": 0.1, schema.ADDR_ROAD: "주소", "근거배지목록": ["배지"]}
+        for i in range(chat_context.RANKING_MAX_ROWS)
+    ])
+    scorer = SimpleNamespace(label="s", description="d")
+    ctx = chat_context.ranking_context(top, rest, scorer, None, n_excluded=0, radius=400, indexed_signals={})
+    assert f"상위 {chat_context.RANKING_MAX_ROWS}곳만" in ctx
 
 
 # ── 구역 동향 ──────────────────────────────────────────────────────────────────

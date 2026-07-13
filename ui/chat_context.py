@@ -10,8 +10,9 @@ from __future__ import annotations
 import pandas as pd
 
 from core import schema
+from signals import base as signal_base
 from signals.outlook import current_phase
-from signals.registry import available_indicators
+from signals.registry import available_indicators, get_signal
 from timeline import trend
 
 # 지표 모듈 import = 레지스트리 등록 → available_indicators()의 id→label 매핑에 필요
@@ -22,6 +23,7 @@ import signals.net_momentum  # noqa: F401
 
 PYEONG_PER_M2 = 1 / 3.3058  # 1평 = 3.3058㎡
 MAP_MAX_ROWS = 400
+RANKING_MAX_ROWS = 500  # 방문 우선순위는 원칙상 '근거 있는 전체'를 담되, 과대 반경 안전판
 RECENT_MAX_ROWS = 40
 RECENT_OPEN_DAYS = 90     # 지도·구역동향의 '신규' 정의와 동일
 RECENT_CLOSE_DAYS = 180   # '폐업' 정의와 동일 (신고 지연 감안)
@@ -86,27 +88,67 @@ def map_context(display: pd.DataFrame | None, cx: float, cy: float, radius: int,
     )
 
 
+def _signal_label(sig_id: str) -> str:
+    try:
+        return get_signal(sig_id).label
+    except KeyError:
+        return sig_id
+
+
+def _signal_detail_text(est_id: str, indexed_signals: dict[str, pd.DataFrame]) -> str:
+    """업소 1곳의 신호별 '상세' 설명(배지 문구보다 상세) — "라벨: 상세" 조각을 모은다."""
+    parts = []
+    for sig_id, df in indexed_signals.items():
+        if est_id not in df.index:
+            continue
+        detail = df.loc[est_id, signal_base.DETAIL]
+        if pd.notna(detail) and detail:
+            parts.append(f"{_signal_label(sig_id)}: {detail}")
+    return " / ".join(parts) if parts else "-"
+
+
 # ── 🎯 방문 우선순위 ──────────────────────────────────────────────────────────
-def ranking_context(top: pd.DataFrame, scorer, now_phase: dict | None, n_excluded: int, radius: int) -> str:
+def ranking_context(
+    top: pd.DataFrame,
+    rest: pd.DataFrame,
+    scorer,
+    now_phase: dict | None,
+    n_excluded: int,
+    radius: int,
+    indexed_signals: dict[str, pd.DataFrame],
+) -> str:
+    """top(화면에 카드로 보이는 상위 30곳, Google 교차검증 포함)과 rest(31위 이하 —
+    근거는 있으나 카드로는 안 보이는 나머지)를 모두 컨텍스트에 담는다. '화면에 없는
+    정보'는 배지·신호 자체가 없는 것만 뜻하고, 31위 이하는 화면 밖이라도 답변 가능."""
     phase = f"현재 국면: {now_phase['국면']}\n" if now_phase else ""
     excluded = f"주류 판매 불가 업소 {n_excluded}곳은 랭킹에서 제외됨.\n" if n_excluded else ""
+
+    combined = pd.concat([top, rest], ignore_index=True) if len(rest) else top
+    total = len(combined)
+    shown = combined.head(RANKING_MAX_ROWS)
+    trunc = ""
+    if total > RANKING_MAX_ROWS:
+        trunc = f"\n\n⚠️ 총 {total:,}곳 중 상위 {RANKING_MAX_ROWS}곳만 아래 표에 포함."
+
     rows = []
-    for _, r in top.iterrows():
+    for _, r in shown.iterrows():
         badges = r.get("근거배지목록") or []
         rows.append([
             r.get("순위"), r[schema.NAME], r[schema.CAT_S],
             f"{float(r['점수']):.3f}" if pd.notna(r.get("점수")) else "-",
             r.get(schema.ADDR_ROAD),
             " / ".join(str(b) for b in badges) if isinstance(badges, (list, tuple)) else "-",
+            _signal_detail_text(r["업소ID"], indexed_signals),
         ])
-    table = _table(["순위", "상호", "업태", "점수", "도로명주소", "근거배지"], rows)
+    table = _table(["순위", "상호", "업태", "점수", "도로명주소", "근거배지", "신호상세"], rows)
     return (
         f"# 화면: 🎯 방문 우선순위\n"
         f"랭킹 기준: {scorer.label} — {scorer.description}\n"
-        f"반경 {radius}m · 상위 {len(top)}곳\n{phase}{excluded}"
-        f"배지에는 관측 사실만 담김(블로그 관측 건수·시점, 기대치 대비 배수, 신규 개업 경과일, "
-        f"구글 평점·리뷰수 등). 블로그 '글 원문'은 수집하지 않으므로 화면에 없다.\n\n"
-        f"## 방문 우선순위 목록\n{table}"
+        f"반경 {radius}m · 근거 있는 전체 {total:,}곳 (이 중 상위 {len(top)}곳만 화면에 카드로 표시, "
+        f"Google 교차검증도 상위 {len(top)}곳까지만 적용됨)\n{phase}{excluded}"
+        f"배지·신호상세에는 관측 사실만 담김(블로그 관측 건수·시점, 기대치 대비 배수, 신규 개업 경과일, "
+        f"구글 평점·리뷰수 등). 블로그 '글 원문'은 수집하지 않으므로 이 데이터에 없다.\n\n"
+        f"## 방문 우선순위 목록 (화면 카드 밖의 순위도 포함)\n{table}{trunc}"
     )
 
 

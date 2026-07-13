@@ -198,12 +198,10 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
 
     st.caption(f"{scorer.label} — {scorer.description}")
 
-    top = scored.head(TOP_N).merge(
-        local[[schema.SRC_ID, schema.NAME, schema.CAT_S, schema.ADDR_ROAD, schema.ADDR_JIBUN, schema.LAT, schema.LON]],
-        left_on="업소ID",
-        right_on=schema.SRC_ID,
-        how="left",
-    )
+    merge_cols = [schema.SRC_ID, schema.NAME, schema.CAT_S, schema.ADDR_ROAD, schema.ADDR_JIBUN, schema.LAT, schema.LON]
+    top = scored.head(TOP_N).merge(local[merge_cols], left_on="업소ID", right_on=schema.SRC_ID, how="left")
+    # 31위 이하 — 카드로는 안 보이지만 근거는 있는 나머지. 챗봇 컨텍스트 전용(Google 교차검증 없음).
+    rest = scored[scored["순위"] > TOP_N].merge(local[merge_cols], left_on="업소ID", right_on=schema.SRC_ID, how="left")
 
     # Places 키가 있으면 상위 후보를 구글로 교차검증 (2패스 — 첫 조회만 느리고 30일 캐시)
     if places.available():
@@ -340,4 +338,7 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
         ).add_to(m)
     st_folium(m, height=420, use_container_width=True, key="ranking_map")
 
-    render_chat("ranking", chat_context.ranking_context(top, scorer, now_phase, n_excluded, radius))
+    render_chat(
+        "ranking",
+        chat_context.ranking_context(top, rest, scorer, now_phase, n_excluded, radius, indexed_signals),
+    )
