@@ -92,5 +92,4 @@ def render_map_tab(cx: float, cy: float, radius: int) -> None:
     channels.apply_radius_message(map_data)
     channels.apply_center_click(map_data)
 
-    st.divider()
     render_chat("map", chat_context.map_context(display, cx, cy, radius, only_core))

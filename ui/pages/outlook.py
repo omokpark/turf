@@ -81,7 +81,6 @@ def render_outlook(cx: float, cy: float, radius: int) -> None:
             f"(최소 {MIN_SAMPLE}건). 수집된 자치단체 안쪽으로 지도를 이동해 보세요."
         )
         _render_recent_lists(near, radius)
-        st.divider()
         render_chat("outlook", chat_context.outlook_context(local, near, {}, radius, eff_radius, widened))
         return
 
@@ -105,7 +104,6 @@ def render_outlook(cx: float, cy: float, radius: int) -> None:
     _render_indicator_cards(results_by_id)
     st.divider()
     _render_recent_lists(near, radius)
-    st.divider()
     render_chat("outlook", chat_context.outlook_context(local, near, results_by_id, radius, eff_radius, widened))
 
 

@@ -64,45 +64,48 @@ def _stream(client: genai.Client, context_md: str, history: list[dict]):
             yield chunk.text
 
 
-def render_chat(screen_key: str, context_md: str, suggestions: list[str] | None = None) -> None:
-    """화면 맨 아래 접이식 챗봇. context_md = 지금 화면 데이터(chat_context.*가 생성)."""
-    suggestions = suggestions or _SUGGESTIONS.get(screen_key, [])
-    with st.expander("💬 이 화면에 물어보기", expanded=False):
-        client = _client()
-        if client is None:
-            st.info(
-                "이 화면 데이터에 대해 질문하려면 `.env`에 `GEMINI_API_KEY`를 넣으세요 — "
-                "aistudio.google.com에서 무료로 발급됩니다. (넣은 뒤 서버 재시작)"
-            )
-            return
+def _render_panel(screen_key: str, context_md: str, suggestions: list[str]) -> None:
+    """고정 패널 내부 — 대화 이력·예시 질문·입력·스트리밍 응답. FAB 열림 상태에서만 호출."""
+    hist_key = f"chat_{screen_key}"
+    history: list[dict] = st.session_state.setdefault(hist_key, [])
 
-        hist_key = f"chat_{screen_key}"
-        history: list[dict] = st.session_state.setdefault(hist_key, [])
+    head, clear = st.columns([4, 1])
+    head.markdown("**💬 이 화면에 물어보기**")
+    if history and clear.button("🧹", key="turf-chat-clear", help="대화 지우기"):
+        st.session_state[hist_key] = []
+        st.rerun()
 
-        if history and st.button("🧹 대화 지우기", key=f"clear_{screen_key}"):
-            st.session_state[hist_key] = []
-            st.rerun()
+    client = _client()
+    if client is None:
+        st.info(
+            "이 화면 데이터에 대해 질문하려면 `.env`에 `GEMINI_API_KEY`를 넣으세요 — "
+            "aistudio.google.com에서 무료로 발급됩니다. (넣은 뒤 서버 재시작)"
+        )
+        return
 
+    # 이미 그려둔 이 컨테이너에 나중에(입력 처리 후) 새 메시지를 추가로 써넣는다 —
+    # 그래야 새 대화가 입력창 '위'에 나타난다.
+    history_box = st.container()
+    with history_box:
         for msg in history:
             with st.chat_message("user" if msg["role"] == "user" else "assistant"):
                 st.markdown(msg["text"])
 
-        pending = None
-        if not history and suggestions:
-            st.caption("예시 질문:")
-            cols = st.columns(len(suggestions))
-            for i, s in enumerate(suggestions):
-                if cols[i].button(s, key=f"sug_{screen_key}_{i}", use_container_width=True):
-                    pending = s
+    pending = None
+    if not history and suggestions:
+        st.caption("예시 질문:")
+        for i, s in enumerate(suggestions):
+            if st.button(s, key=f"sug_{screen_key}_{i}", use_container_width=True):
+                pending = s
 
-        prompt = pending or st.chat_input("이 화면 데이터에 대해 질문하세요", key=f"in_{screen_key}")
-        if not prompt:
-            return
+    prompt = pending or st.chat_input("이 화면 데이터에 대해 질문하세요", key=f"in_{screen_key}")
+    if not prompt:
+        return
 
-        history.append({"role": "user", "text": prompt})
+    history.append({"role": "user", "text": prompt})
+    with history_box:
         with st.chat_message("user"):
             st.markdown(prompt)
-
         with st.chat_message("assistant"):
             try:
                 reply = st.write_stream(_stream(client, context_md, history))
@@ -119,4 +122,26 @@ def render_chat(screen_key: str, context_md: str, suggestions: list[str] | None 
                 st.warning(f"응답 중 오류가 발생했습니다: {e}")
                 return
 
-        history.append({"role": "model", "text": reply})
+    history.append({"role": "model", "text": reply})
+
+
+def render_chat(screen_key: str, context_md: str, suggestions: list[str] | None = None) -> None:
+    """우하단 플로팅 챗봇 — 💬 FAB로 여닫고, 열리면 고정 패널에 대화가 뜬다.
+
+    위치 고정은 theme.py의 .st-key-turf-chat-fab / -panel CSS가 담당한다(위젯은 정상
+    렌더 트리에 있어 그대로 동작). 화면 전환(segmented_control)당 render_chat은 1회만
+    호출되므로 열림 상태(chat_open)는 전역 하나면 충분하다 — 대화 이력만 화면별로 분리.
+    context_md = 지금 화면 데이터(chat_context.*가 생성)."""
+    suggestions = suggestions or _SUGGESTIONS.get(screen_key, [])
+    is_open = st.session_state.get("chat_open", False)
+
+    with st.container(key="turf-chat-fab"):
+        if st.button("✕" if is_open else "💬", key="turf-chat-toggle", help="이 화면에 물어보기"):
+            st.session_state["chat_open"] = not is_open
+            st.rerun()
+
+    if not is_open:
+        return
+
+    with st.container(key="turf-chat-panel"):
+        _render_panel(screen_key, context_md, suggestions)

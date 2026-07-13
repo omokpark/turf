@@ -340,5 +340,4 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
         ).add_to(m)
     st_folium(m, height=420, use_container_width=True, key="ranking_map")
 
-    st.divider()
     render_chat("ranking", chat_context.ranking_context(top, scorer, now_phase, n_excluded, radius))
