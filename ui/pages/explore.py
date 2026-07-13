@@ -13,7 +13,8 @@ from core.area import Area, MAX_RADIUS_M, MIN_RADIUS_M, filter_radius, walk_minu
 from datasources import moi_store
 from signals.outlook import liquor_affinity
 from timeline import trend
-from ui import channels, data
+from ui import channels, chat_context, data
+from ui.chatbot import render_chat
 from ui.map_view import render_map
 
 RECENT_OPEN_DAYS = 90
@@ -90,3 +91,6 @@ def render_map_tab(cx: float, cy: float, radius: int) -> None:
 
     channels.apply_radius_message(map_data)
     channels.apply_center_click(map_data)
+
+    st.divider()
+    render_chat("map", chat_context.map_context(display, cx, cy, radius, only_core))

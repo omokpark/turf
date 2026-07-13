@@ -4,9 +4,10 @@
    분석·가중치 조정의 학습 데이터가 된다. 반드시 그 순간의 신호값·점수·스코어러·
    반경 스냅샷과 함께 저장한다 — 신호값은 매일 흘러가므로(개업 경과일 등) 라벨과
    특징이 어긋나면 안 된다.
-② 업소 속성 (폐업했어요/우리 거래처예요): 랭킹의 옳고 그름이 아니라 업소 자체의
-   지속적 사실. 방문가치 채널과 섞으면 "이미 거래처라 없었음"이 "추천이 나쁘다"로
-   오염돼, 모델이 최고의 개척 후보(거래처와 닮은 집)를 피하도록 학습하게 된다.
+② 업소 속성 (폐업/주류미취급/당사 우호 업소/기타): 랭킹의 옳고 그름이 아니라 업소
+   자체의 사실. 방문가치 채널과 섞으면 안 된다 — "이미 문 닫은 곳/우리 우호 업소라
+   없었음"이 "추천이 나쁘다"로 오염되면, 모델이 최고의 개척 후보(우호 업소와 닮은 집)를
+   피하도록 학습하게 된다. 그래서 사실 정정·우호 여부는 별도 채널로 유지한다.
 
 ③ 노출 로그: 피드백이 없어도 "무엇이 노출됐는지"가 있어야 배지별 lift(피드백
    그룹 비율 vs 노출 전체 비율)를 계산할 수 있다 — 피드백만 쌓으면 대조군이 없다.
@@ -35,8 +36,27 @@ EXPOSURE_DIR = FEEDBACK_DIR / "exposures"
 
 LABEL_UP = "up"      # 방문가치 높았음
 LABEL_DOWN = "down"  # 방문가치 없었음
+
+# 업소 속성(사유) — 방문가치 피드백과 분리된 사실 정정 채널. dict 순서 = 팝오버 표시 순.
+# ATTR_CLIENT 저장 키는 "거래처"로 유지(과거 기록·lift 분석 연속성) — 표시 라벨만 바뀐다.
 ATTR_CLOSED = "폐업"
+ATTR_NO_LIQUOR = "주류미취급"
 ATTR_CLIENT = "거래처"
+ATTR_OTHER = "기타"
+
+# 라벨 단일 출처: 팝오버 체크박스 라벨과 카드 칩 라벨. 여기 한 곳만 고치면 UI·검증 모두 반영.
+ATTRIBUTE_LABELS = {
+    ATTR_CLOSED: "🚫 폐업했어요",
+    ATTR_NO_LIQUOR: "🍺 주류미취급 업소예요",
+    ATTR_CLIENT: "🤝 당사 우호 업소예요",
+    ATTR_OTHER: "🏷️ 기타",
+}
+ATTRIBUTE_CHIP_LABELS = {
+    ATTR_CLOSED: "🚫 폐업 신고됨 (직접 표시)",
+    ATTR_NO_LIQUOR: "🍺 주류 미취급 (직접 표시)",
+    ATTR_CLIENT: "🤝 당사 우호 업소 (직접 표시)",
+    ATTR_OTHER: "🏷️ 기타 사유 (직접 표시)",
+}
 
 
 def _now(now: datetime | None) -> datetime:
@@ -146,8 +166,8 @@ def record_feedback(
 
 
 def record_attribute(est_id: str, name: str, attribute: str, value: bool, now: datetime | None = None) -> None:
-    """업소 속성 토글 1건 (폐업했어요/우리 거래처예요) — 방문가치 피드백과 분리된 채널."""
-    if attribute not in (ATTR_CLOSED, ATTR_CLIENT):
+    """업소 속성 토글 1건 (폐업/주류미취급/당사 우호 업소/기타) — 방문가치 피드백과 분리된 채널."""
+    if attribute not in ATTRIBUTE_LABELS:
         raise ValueError(f"알 수 없는 속성: {attribute}")
     record = {
         "시각": _now(now).isoformat(),

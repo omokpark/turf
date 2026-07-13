@@ -6,9 +6,10 @@
 
 피드백 2채널 (2026-07-12 설계): 카드마다 👍 방문가치 높았음/👎 없었음(그 순간의
 신호값·점수 스냅샷과 함께 저장, 추후 배지별 lift 분석·가중치 조정용)과 별도로,
-"⋯" 안에 폐업했어요/우리 거래처예요(업소의 지속적 속성 — 랭킹 품질 피드백과 절대
-섞이지 않는다. 안 그러면 "이미 거래처라 없었음"이 학습돼 최고의 개척 후보를 피하게
-된다). 노출 로그(feedback_store.log_exposure)는 피드백 유무와 무관하게 상위 30곳을
+"⋯" 안에 업소 사유(폐업/주류미취급/당사 우호 업소/기타) — 업소 자체의 사실이라 랭킹
+품질 피드백과 절대 섞이지 않는다(섞이면 "우호 업소라 없었음"이 학습돼 최고의 개척
+후보를 피하게 된다).
+노출 로그(feedback_store.log_exposure)는 피드백 유무와 무관하게 상위 30곳을
 기록해, 나중에 "피드백군 vs 노출 전체"의 대조군 역할을 한다.
 """
 
@@ -28,7 +29,8 @@ from signals import base as signal_base
 from signals.base import AreaContext
 from signals.outlook import current_phase, liquor_affinity
 from signals.registry import available_signals
-from ui import data
+from ui import chat_context, data
+from ui.chatbot import render_chat
 from ui.components.badges import quota_signal, render_badges
 from ui.components.csv_export import neutralize_formulas
 
@@ -262,11 +264,11 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
             render_badges(row["근거배지목록"])
 
             shop_attrs = attr_state.get(est_id, {})
-            attr_chips = []
-            if shop_attrs.get(feedback_store.ATTR_CLOSED):
-                attr_chips.append("🚫 폐업 신고됨 (직접 표시)")
-            if shop_attrs.get(feedback_store.ATTR_CLIENT):
-                attr_chips.append("🏷️ 우리 거래처")
+            attr_chips = [
+                feedback_store.ATTRIBUTE_CHIP_LABELS[attr]
+                for attr in feedback_store.ATTRIBUTE_LABELS
+                if shop_attrs.get(attr)
+            ]
             if attr_chips:
                 render_badges(attr_chips)
 
@@ -298,22 +300,15 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
                     st.rerun()
             with more_col:
                 with st.popover("⋯", use_container_width=True):
-                    # 방문가치 피드백과 분리된 채널 — "이미 거래처라 없었음"이 랭킹 품질
-                    # 피드백으로 섞이면 모델이 최고의 개척 후보를 피하도록 학습하게 된다.
-                    new_closed = st.checkbox(
-                        "🚫 폐업했어요", value=shop_attrs.get(feedback_store.ATTR_CLOSED, False),
-                        key=f"attr_closed_{rank}_{est_id}",
-                    )
-                    if new_closed != shop_attrs.get(feedback_store.ATTR_CLOSED, False):
-                        feedback_store.record_attribute(est_id, row[schema.NAME], feedback_store.ATTR_CLOSED, new_closed)
-                        st.rerun()
-                    new_client = st.checkbox(
-                        "🏷️ 우리 거래처예요", value=shop_attrs.get(feedback_store.ATTR_CLIENT, False),
-                        key=f"attr_client_{rank}_{est_id}",
-                    )
-                    if new_client != shop_attrs.get(feedback_store.ATTR_CLIENT, False):
-                        feedback_store.record_attribute(est_id, row[schema.NAME], feedback_store.ATTR_CLIENT, new_client)
-                        st.rerun()
+                    # 방문가치 피드백과 분리된 사실 정정 채널 — 여기서 기록하는 폐업/주류미취급/
+                    # 기타는 업소 자체의 사실이지 랭킹 품질 신호가 아니다(섞으면 학습이 오염된다).
+                    st.caption("업소 사유 (방문가치 👍/👎와 별개로 기록)")
+                    for attr, label in feedback_store.ATTRIBUTE_LABELS.items():
+                        cur = shop_attrs.get(attr, False)
+                        new = st.checkbox(label, value=cur, key=f"attr_{attr}_{rank}_{est_id}")
+                        if new != cur:
+                            feedback_store.record_attribute(est_id, row[schema.NAME], attr, new)
+                            st.rerun()
 
     # 방문 리스트 CSV — 상위 N곳 + 근거 (업종 구성 탭에 있던 내보내기를 여기로 흡수)
     export = top[["순위", schema.NAME, schema.CAT_S, schema.ADDR_ROAD, "점수", "근거"]].rename(
@@ -344,3 +339,6 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
             tooltip=folium.Tooltip(f"{row['순위']}위 · {shop_name}", permanent=False, direction="top", sticky=False),
         ).add_to(m)
     st_folium(m, height=420, use_container_width=True, key="ranking_map")
+
+    st.divider()
+    render_chat("ranking", chat_context.ranking_context(top, scorer, now_phase, n_excluded, radius))

@@ -19,7 +19,8 @@ from signals.base import AreaContext, IndicatorResult
 from signals.outlook import LIQUOR_CATS, LIQUOR_NAME_KEYWORDS, PHASE_BUFFER, current_phase, phase_trajectory
 from signals.registry import available_indicators
 from timeline import trend
-from ui import data
+from ui import chat_context, data
+from ui.chatbot import render_chat
 from ui.components.badges import freshness_signal, percentile_signal
 
 # 지표 모듈 import = 레지스트리 등록 (파일 1개 추가 = 카드 1장 추가).
@@ -80,6 +81,8 @@ def render_outlook(cx: float, cy: float, radius: int) -> None:
             f"(최소 {MIN_SAMPLE}건). 수집된 자치단체 안쪽으로 지도를 이동해 보세요."
         )
         _render_recent_lists(near, radius)
+        st.divider()
+        render_chat("outlook", chat_context.outlook_context(local, near, {}, radius, eff_radius, widened))
         return
 
     if widened:
@@ -102,6 +105,8 @@ def render_outlook(cx: float, cy: float, radius: int) -> None:
     _render_indicator_cards(results_by_id)
     st.divider()
     _render_recent_lists(near, radius)
+    st.divider()
+    render_chat("outlook", chat_context.outlook_context(local, near, results_by_id, radius, eff_radius, widened))
 
 
 # ── ③ 최근 신규·폐업 (변화 탭 통합) ────────────────────────────────────────────

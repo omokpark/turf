@@ -8,6 +8,7 @@
   직접 못 바꾼다 — 여기 담아 rerun 후 init_session()에서 반영한다.
 - moved_address / last_analysis_key: 재분석 토스트용
 - address_candidates / processed_click / processed_radius_nonce: 검색·채널 중복 방지
+- chat_{screen_key}: 화면별 챗봇 대화 이력 (ui/chatbot.py) — [{"role","text"}] 리스트
 """
 
 import streamlit as st

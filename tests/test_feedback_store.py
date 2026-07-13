@@ -99,15 +99,15 @@ def test_record_feedback_persists_signal_snapshot_for_lift_analysis(store):
 
 # ── 업소 속성 (방문가치와 분리된 채널) ─────────────────────────────────────────
 def test_record_attribute_last_wins_per_attribute(store):
-    fs.record_attribute("A", "가게A", fs.ATTR_CLIENT, True, now=pd.Timestamp("2026-07-12 09:00:00"))
+    fs.record_attribute("A", "가게A", fs.ATTR_NO_LIQUOR, True, now=pd.Timestamp("2026-07-12 09:00:00"))
     fs.record_attribute("A", "가게A", fs.ATTR_CLOSED, True, now=pd.Timestamp("2026-07-12 09:05:00"))
     attrs = fs.latest_attributes()
-    assert attrs["A"] == {fs.ATTR_CLIENT: True, fs.ATTR_CLOSED: True}
+    assert attrs["A"] == {fs.ATTR_NO_LIQUOR: True, fs.ATTR_CLOSED: True}
 
-    fs.record_attribute("A", "가게A", fs.ATTR_CLIENT, False, now=pd.Timestamp("2026-07-12 10:00:00"))
+    fs.record_attribute("A", "가게A", fs.ATTR_NO_LIQUOR, False, now=pd.Timestamp("2026-07-12 10:00:00"))
     attrs = fs.latest_attributes()
-    assert attrs["A"][fs.ATTR_CLIENT] is False  # 취소 가능
-    assert attrs["A"][fs.ATTR_CLOSED] is True   # 다른 속성은 영향 없음
+    assert attrs["A"][fs.ATTR_NO_LIQUOR] is False  # 취소 가능
+    assert attrs["A"][fs.ATTR_CLOSED] is True       # 다른 속성은 영향 없음
 
 
 def test_record_attribute_invalid_raises(store):

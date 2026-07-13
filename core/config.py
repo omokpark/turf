@@ -57,3 +57,11 @@ def places_key() -> str:
     if not key:
         raise RuntimeError(".env에 GOOGLE_PLACES_API_KEY가 설정되어 있지 않습니다.")
     return key
+
+
+def gemini_key() -> str:
+    """Google Gemini(AI Studio) 무료 티어 키 — 화면별 챗봇용. aistudio.google.com에서 발급."""
+    key = os.getenv("GEMINI_API_KEY")
+    if not key:
+        raise RuntimeError(".env에 GEMINI_API_KEY가 설정되어 있지 않습니다.")
+    return key
