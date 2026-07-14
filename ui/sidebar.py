@@ -1,11 +1,11 @@
-"""사이드바 — 검색·필터 패널. 정확한 중심·반경 조작은 본문 지도에서."""
+"""사이드바 — 메뉴(화면 전환)·채팅 토글·검색·필터 패널. 정확한 중심·반경 조작은 본문 지도에서."""
 
 import streamlit as st
 
 from collector.geocoder import geocode_address, search_places
 from core.area import DEFAULT_RADIUS_M
 from datasources import favorites_store
-from ui.state import GANGNAM_STATION, MAX_CANDIDATES, move_to
+from ui.state import GANGNAM_STATION, MAX_CANDIDATES, PAGES, move_to
 
 
 def _dedupe_by_district(candidates: list[dict]) -> list[dict]:
@@ -96,11 +96,19 @@ def _render_favorites() -> None:
         st.rerun()
 
 
-def render_sidebar() -> None:
-    """사이드바 — 검색·즐겨찾기·위치 초기화. (업종 필터는 영업사원 관점에서 불필요해
-    제거, 지도가 주류 가능 업소를 전부 보여준다.)"""
+def render_sidebar() -> str:
+    """사이드바 — 메뉴·채팅 토글·검색·즐겨찾기·위치 초기화. 선택된 화면을 반환한다.
+
+    (업종 필터는 영업사원 관점에서 불필요해 제거, 지도가 주류 가능 업소를 전부 보여준다.)
+    """
     with st.sidebar:
         st.title("🍶 Sales Radar")
+
+        st.markdown("**🧭 메뉴**")
+        page = st.radio("화면", PAGES, key="active_page", label_visibility="collapsed")
+        st.toggle(f"💬 {page} 데이터에 물어보기", key="chat_open")
+        st.divider()
+
         _render_address_search()
         st.divider()
         _render_favorites()
@@ -109,3 +117,5 @@ def render_sidebar() -> None:
             move_to(*GANGNAM_STATION)
             st.session_state.radius_slider = DEFAULT_RADIUS_M
             st.rerun()
+
+    return page

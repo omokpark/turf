@@ -124,7 +124,7 @@ def _cached_signal_results(
     return results
 
 
-def render_ranking(cx: float, cy: float, radius: int) -> None:
+def render_ranking(cx: float, cy: float, radius: int, chat_col=None) -> None:
     roster = data.load_roster()
     if len(roster) == 0:
         st.info("인허가 데이터가 아직 수집되지 않았습니다. '구역 아웃룩' 탭의 안내를 참고하세요.")
@@ -338,7 +338,9 @@ def render_ranking(cx: float, cy: float, radius: int) -> None:
         ).add_to(m)
     st_folium(m, height=420, use_container_width=True, key="ranking_map")
 
-    render_chat(
-        "ranking",
-        chat_context.ranking_context(top, rest, scorer, now_phase, n_excluded, radius, indexed_signals),
-    )
+    if chat_col is not None:
+        with chat_col:
+            render_chat(
+                "ranking",
+                chat_context.ranking_context(top, rest, scorer, now_phase, n_excluded, radius, indexed_signals),
+            )

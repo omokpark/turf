@@ -4,6 +4,10 @@
 질문만 대화로 주고받는다. 새 검색·API 호출 없음. 판단 원칙 가드레일은 SYSTEM_PROMPT에
 못박는다(창업 판단·추천·예측 금지, 관측 사실만). provider = Google Gemini 무료 티어.
 
+배치: 사이드바 토글(chat_open)이 켜지면 app.py가 본문을 st.columns(MAIN_CHAT_RATIO)로
+분할하고, 그 채팅 열 안에서 각 화면(ui/pages/*.py)이 render_chat을 호출한다 — 이 모듈은
+열림/닫힘을 몰라도 된다(호출된다는 것 자체가 열림).
+
 세션 대화 이력 키: st.session_state[f"chat_{screen_key}"] — [{"role","text"}] 리스트.
 """
 
@@ -68,84 +72,69 @@ def _stream(client: genai.Client, context_md: str, history: list[dict]):
             yield chunk.text
 
 
-def _render_panel(screen_key: str, context_md: str, suggestions: list[str]) -> None:
-    """고정 패널 내부 — 대화 이력·예시 질문·입력·스트리밍 응답. FAB 열림 상태에서만 호출."""
+def render_chat(screen_key: str, context_md: str, suggestions: list[str] | None = None) -> None:
+    """본문:채팅 컬럼 중 채팅 열(chat_col) 안에서 호출되는 패널 콘텐츠.
+
+    열기/닫기는 사이드바 토글(chat_open, ui/sidebar.py)이 소유한다 — 이 함수가
+    호출된다는 것 자체가 이미 "열림"을 뜻하므로 여기선 열림 상태를 다루지 않는다.
+    호출부(ui/pages/*.py)가 `if chat_col is not None: with chat_col: render_chat(...)`
+    패턴으로 감싼다. context_md = 지금 화면 데이터(chat_context.*가 생성)."""
+    suggestions = suggestions or _SUGGESTIONS.get(screen_key, [])
     hist_key = f"chat_{screen_key}"
     history: list[dict] = st.session_state.setdefault(hist_key, [])
 
-    head, clear = st.columns([4, 1])
-    head.markdown("**💬 이 화면에 물어보기**")
-    if history and clear.button("🧹", key="turf-chat-clear", help="대화 지우기"):
-        st.session_state[hist_key] = []
-        st.rerun()
-
-    client = _client()
-    if client is None:
-        st.info(
-            "이 화면 데이터에 대해 질문하려면 `.env`에 `GEMINI_API_KEY`를 넣으세요 — "
-            "aistudio.google.com에서 무료로 발급됩니다. (넣은 뒤 서버 재시작)"
-        )
-        return
-
-    # 이미 그려둔 이 컨테이너에 나중에(입력 처리 후) 새 메시지를 추가로 써넣는다 —
-    # 그래야 새 대화가 입력창 '위'에 나타난다.
-    history_box = st.container()
-    with history_box:
-        for msg in history:
-            with st.chat_message("user" if msg["role"] == "user" else "assistant"):
-                st.markdown(msg["text"])
-
-    pending = None
-    if not history and suggestions:
-        st.caption("예시 질문:")
-        for i, s in enumerate(suggestions):
-            if st.button(s, key=f"sug_{screen_key}_{i}", use_container_width=True):
-                pending = s
-
-    prompt = pending or st.chat_input("이 화면 데이터에 대해 질문하세요", key=f"in_{screen_key}")
-    if not prompt:
-        return
-
-    history.append({"role": "user", "text": prompt})
-    with history_box:
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        with st.chat_message("assistant"):
-            try:
-                reply = st.write_stream(_stream(client, context_md, history))
-            except errors.ClientError as e:
-                if getattr(e, "code", None) == 429:
-                    st.warning("무료 사용량 한도에 도달했습니다. 잠시 후 다시 시도하세요.")
-                else:
-                    st.warning(f"요청을 처리하지 못했습니다: {getattr(e, 'message', e)}")
-                return
-            except errors.APIError as e:  # 5xx 등
-                st.warning(f"Gemini 서버 오류로 응답하지 못했습니다: {getattr(e, 'message', e)}")
-                return
-            except Exception as e:  # noqa: BLE001 — 챗봇은 어떤 이유로도 앱을 죽이면 안 된다
-                st.warning(f"응답 중 오류가 발생했습니다: {e}")
-                return
-
-    history.append({"role": "model", "text": reply})
-
-
-def render_chat(screen_key: str, context_md: str, suggestions: list[str] | None = None) -> None:
-    """우하단 플로팅 챗봇 — 💬 FAB로 여닫고, 열리면 고정 패널에 대화가 뜬다.
-
-    위치 고정은 theme.py의 .st-key-turf-chat-fab / -panel CSS가 담당한다(위젯은 정상
-    렌더 트리에 있어 그대로 동작). 화면 전환(segmented_control)당 render_chat은 1회만
-    호출되므로 열림 상태(chat_open)는 전역 하나면 충분하다 — 대화 이력만 화면별로 분리.
-    context_md = 지금 화면 데이터(chat_context.*가 생성)."""
-    suggestions = suggestions or _SUGGESTIONS.get(screen_key, [])
-    is_open = st.session_state.get("chat_open", False)
-
-    with st.container(key="turf-chat-fab"):
-        if st.button("✕" if is_open else "💬", key="turf-chat-toggle", help="이 화면에 물어보기"):
-            st.session_state["chat_open"] = not is_open
+    with st.container(border=True):
+        head, clear = st.columns([4, 1])
+        head.markdown("**💬 이 화면에 물어보기**")
+        if history and clear.button("🧹", key=f"clear_{screen_key}", help="대화 지우기"):
+            st.session_state[hist_key] = []
             st.rerun()
 
-    if not is_open:
-        return
+        client = _client()
+        if client is None:
+            st.info(
+                "이 화면 데이터에 대해 질문하려면 `.env`에 `GEMINI_API_KEY`를 넣으세요 — "
+                "aistudio.google.com에서 무료로 발급됩니다. (넣은 뒤 서버 재시작)"
+            )
+            return
 
-    with st.container(key="turf-chat-panel"):
-        _render_panel(screen_key, context_md, suggestions)
+        # 이미 그려둔 이 컨테이너에 나중에(입력 처리 후) 새 메시지를 추가로 써넣는다 —
+        # 그래야 새 대화가 입력창 '위'에 나타난다.
+        history_box = st.container()
+        with history_box:
+            for msg in history:
+                with st.chat_message("user" if msg["role"] == "user" else "assistant"):
+                    st.markdown(msg["text"])
+
+        pending = None
+        if not history and suggestions:
+            st.caption("예시 질문:")
+            for i, s in enumerate(suggestions):
+                if st.button(s, key=f"sug_{screen_key}_{i}", use_container_width=True):
+                    pending = s
+
+        prompt = pending or st.chat_input("이 화면 데이터에 대해 질문하세요", key=f"in_{screen_key}")
+        if not prompt:
+            return
+
+        history.append({"role": "user", "text": prompt})
+        with history_box:
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            with st.chat_message("assistant"):
+                try:
+                    reply = st.write_stream(_stream(client, context_md, history))
+                except errors.ClientError as e:
+                    if getattr(e, "code", None) == 429:
+                        st.warning("무료 사용량 한도에 도달했습니다. 잠시 후 다시 시도하세요.")
+                    else:
+                        st.warning(f"요청을 처리하지 못했습니다: {getattr(e, 'message', e)}")
+                    return
+                except errors.APIError as e:  # 5xx 등
+                    st.warning(f"Gemini 서버 오류로 응답하지 못했습니다: {getattr(e, 'message', e)}")
+                    return
+                except Exception as e:  # noqa: BLE001 — 챗봇은 어떤 이유로도 앱을 죽이면 안 된다
+                    st.warning(f"응답 중 오류가 발생했습니다: {e}")
+                    return
+
+        history.append({"role": "model", "text": reply})

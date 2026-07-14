@@ -56,7 +56,7 @@ def _cached_indicator_results(
     return {ind.id: ind.compute(ctx) for ind in available_indicators({"moi"})}
 
 
-def render_outlook(cx: float, cy: float, radius: int) -> None:
+def render_outlook(cx: float, cy: float, radius: int, chat_col=None) -> None:
     freshness = moi_store.freshness()
     roster = data.load_roster()
 
@@ -81,7 +81,9 @@ def render_outlook(cx: float, cy: float, radius: int) -> None:
             f"(최소 {MIN_SAMPLE}건). 수집된 자치단체 안쪽으로 지도를 이동해 보세요."
         )
         _render_recent_lists(near, radius)
-        render_chat("outlook", chat_context.outlook_context(local, near, {}, radius, eff_radius, widened))
+        if chat_col is not None:
+            with chat_col:
+                render_chat("outlook", chat_context.outlook_context(local, near, {}, radius, eff_radius, widened))
         return
 
     if widened:
@@ -104,7 +106,9 @@ def render_outlook(cx: float, cy: float, radius: int) -> None:
     _render_indicator_cards(results_by_id)
     st.divider()
     _render_recent_lists(near, radius)
-    render_chat("outlook", chat_context.outlook_context(local, near, results_by_id, radius, eff_radius, widened))
+    if chat_col is not None:
+        with chat_col:
+            render_chat("outlook", chat_context.outlook_context(local, near, results_by_id, radius, eff_radius, widened))
 
 
 # ── ③ 최근 신규·폐업 (변화 탭 통합) ────────────────────────────────────────────

@@ -57,7 +57,7 @@ def _cached_display(
     return _build_display(data.load_roster(), cx, cy, radius, affinity_min)
 
 
-def render_map_tab(cx: float, cy: float, radius: int) -> None:
+def render_map_tab(cx: float, cy: float, radius: int, chat_col=None) -> None:
     ctrl_col, walk_col = st.columns([5, 1])
     with ctrl_col:
         st.slider(
@@ -92,4 +92,6 @@ def render_map_tab(cx: float, cy: float, radius: int) -> None:
     channels.apply_radius_message(map_data)
     channels.apply_center_click(map_data)
 
-    render_chat("map", chat_context.map_context(display, cx, cy, radius, only_core))
+    if chat_col is not None:
+        with chat_col:
+            render_chat("map", chat_context.map_context(display, cx, cy, radius, only_core))

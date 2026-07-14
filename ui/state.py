@@ -9,6 +9,8 @@
 - moved_address / last_analysis_key: 재분석 토스트용
 - address_candidates / processed_click / processed_radius_nonce: 검색·채널 중복 방지
 - chat_{screen_key}: 화면별 챗봇 대화 이력 (ui/chatbot.py) — [{"role","text"}] 리스트
+- active_page: 사이드바 화면 전환 라디오(ui/sidebar.py)의 단일 소스
+- chat_open: 사이드바 채팅 토글 — 켜지면 본문이 본문:채팅 컬럼으로 분할된다(app.py)
 """
 
 import streamlit as st
@@ -22,6 +24,14 @@ NEUTRAL_COLOR = "#9aa5a0"
 CATEGORY_PALETTE = ["#c0392b", "#2f6e5b", "#b07d1f", "#5b4b8a", "#1f6f91", "#8a4b6b", "#4b8a4f", "#8a6b4b"]
 CLUSTER_THRESHOLD = 40
 MAX_CANDIDATES = 5
+
+# 화면 전환 메뉴 — app.py(분기)·sidebar.py(라디오 렌더)가 공용으로 참조
+PAGE_MAP = "🗺️ 지도"
+PAGE_OUTLOOK = "📈 구역 동향"
+PAGE_RANKING = "🎯 방문 우선순위"
+PAGES = [PAGE_MAP, PAGE_OUTLOOK, PAGE_RANKING]
+
+MAIN_CHAT_RATIO = [0.65, 0.35]  # 채팅 열렸을 때 본문:채팅 컬럼 비율
 
 CROSSHAIR_HTML = """
 <svg width="22" height="22" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">

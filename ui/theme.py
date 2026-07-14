@@ -47,29 +47,6 @@ div[data-testid="stVerticalBlockBorderWrapper"] {
 /* ── 랭킹 카드 헤더 줄 ────────────────────────────────────────────────── */
 .turf-rank-medal { font-size: 1.4rem; line-height: 1; }
 .turf-rank-num { font-size: 1.1rem; font-weight: 700; opacity: 0.7; }
-
-/* ── 플로팅 챗봇 (우하단 FAB + 고정 패널) ──────────────────────────────── */
-/* key로 생성되는 st-key-* 클래스를 CSS 훅으로 써서 위젯을 뷰포트 모서리에 고정한다.
-   위젯 자체는 정상 렌더 트리에 있어 동작하고, CSS는 위치만 바꾼다. */
-.st-key-turf-chat-fab {
-    position: fixed; bottom: 1.5rem; right: 1.5rem; z-index: 999999; width: auto !important;
-}
-.st-key-turf-chat-fab button {
-    border-radius: 50% !important; width: 3.5rem; height: 3.5rem;
-    font-size: 1.5rem; padding: 0 !important;
-    box-shadow: 0 6px 20px rgba(0,0,0,0.22);
-}
-.st-key-turf-chat-panel {
-    position: fixed; bottom: 5.6rem; right: 1.5rem;
-    width: 390px; max-width: 92vw; max-height: 72vh; overflow-y: auto; overflow-x: hidden;
-    z-index: 999999;
-    background: var(--secondary-background-color, #ffffff);
-    border: 1px solid rgba(120, 130, 140, 0.25); border-radius: 14px;
-    padding: 0.6rem 1rem 0.9rem; box-shadow: 0 10px 34px rgba(0,0,0,0.20);
-}
-@media (max-width: 480px) {
-    .st-key-turf-chat-panel { right: 4vw; left: 4vw; width: auto; bottom: 5rem; }
-}
 </style>
 """
 
