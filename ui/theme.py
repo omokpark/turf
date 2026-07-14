@@ -24,9 +24,20 @@ div[data-testid="stMetricValue"] { font-size: 1.5rem; }
 div[data-testid="stMetricLabel"] { font-size: 0.85rem; opacity: 0.85; }
 
 /* ── 카드 컨테이너(랭킹 등)는 st.container(border=True)가 만드는 테두리를
-   살짝 다듬어 카드처럼 보이게 ─────────────────────────────────────────── */
+   살짝 다듬어 카드처럼 보이게, 라이트 모드에서는 옅은 그림자로 '떠 있는' 느낌도
+   더한다(다크 모드는 그림자가 배경에 묻혀 보이지 않으므로 테두리·반경만) ────── */
 div[data-testid="stVerticalBlockBorderWrapper"] {
     border-radius: 12px !important;
+}
+@media (prefers-color-scheme: light) {
+    div[data-testid="stVerticalBlockBorderWrapper"] {
+        box-shadow: 0 1px 3px rgba(43, 38, 34, 0.10), 0 1px 2px rgba(43, 38, 34, 0.06) !important;
+    }
+}
+
+/* ── 사이드바를 본문과 뚜렷이 구분 ───────────────────────────────────────── */
+section[data-testid="stSidebar"] {
+    box-shadow: 1px 0 6px rgba(43, 38, 34, 0.06);
 }
 
 /* ── 배지 칩 ──────────────────────────────────────────────────────────── */

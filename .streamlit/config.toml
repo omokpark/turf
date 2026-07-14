@@ -1,0 +1,18 @@
+[theme]
+font = "sans-serif"
+baseRadius = "0.5rem"
+buttonRadius = "0.5rem"
+
+[theme.light]
+primaryColor = "#1f6f91"
+backgroundColor = "#fcfcfb"
+secondaryBackgroundColor = "#ece5d8"
+textColor = "#2b2622"
+borderColor = "#d9cfc0"
+
+[theme.dark]
+primaryColor = "#5cb3d1"
+backgroundColor = "#1c1a18"
+secondaryBackgroundColor = "#332c22"
+textColor = "#ece7e0"
+borderColor = "#4a4030"
